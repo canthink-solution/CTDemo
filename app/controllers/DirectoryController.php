@@ -1,0 +1,89 @@
+<?php
+
+include_once '../../init.php';
+
+// Check if request comes from within the application
+if (!isAjax()) error_page('403');
+
+
+function getUserByID($request = null)
+{
+    $data = db()->table('users')
+        ->select('`users`.`id`, `users`.`name`, `users`.`email`, `users`.`user_preferred_name`, `users`.`user_dob`, `users`.`username`, `users`.`password`, `users`.`user_status`')
+        ->where('id', request('id'))
+        ->with('profile', 'user_profile', 'user_id', 'id', function ($db) {
+            $db->select('id,user_id,role_id,is_main,profile_status')
+                ->withOne('roles', 'master_roles', 'id', 'role_id', function ($db) {
+                    $db->select('id,role_name,role_status');
+                });
+        })->withOne('profile_avatar', 'entity_files', 'entity_id', 'id', function ($db) {
+            $db->select('id,files_path,files_disk_storage,files_path_is_url,files_description,entity_file_type')
+                ->where('entity_type', 'User_model')
+                ->where('entity_file_type', 'PROFILE_PHOTO');
+        })->withOne('profile_header', 'entity_files', 'entity_id', 'id', function ($db) {
+            $db->select('id,files_path,files_disk_storage,files_path_is_url,files_description,entity_file_type')
+                ->where('entity_type', 'User_model')
+                ->where('entity_file_type', 'PROFILE_HEADER_PHOTO');
+        })
+        ->fetch();
+
+    json($data);
+}
+
+function createUser($request = null)
+{
+    $data = [
+        'name' => request('name'),
+        'user_preferred_name' => request('user_preferred_name'),
+        'email' => request('email'),
+        'user_gender' => request('user_gender'),
+        'user_dob' => request('user_dob'),
+        'username' => request('username'),
+        'password' => request('password'),
+        'user_status' => request('user_status')
+    ];
+
+    $validate = validate($data, _rulesDirectory('insert'));
+    $result = $validate['result'] ? db()->insert('users', $data) : $validate['error'];
+
+    json($result);
+}
+
+function updateUser($request = null)
+{
+    $data = [
+        'id' => request('id'),
+        'name' => request('name'),
+        'user_preferred_name' => request('user_preferred_name'),
+        'email' => request('email'),
+        'user_gender' => request('user_gender'),
+        'user_dob' => request('user_dob'),
+        'username' => request('username'),
+        'password' => request('password'),
+        'user_status' => request('user_status')
+    ];
+
+    $validate = validate($data, _rulesDirectory('update'));
+    $result = $validate['result'] ? db()->update('users', $data, ['id' => request('id')]) : $validate['error'];
+
+    json($result);
+}
+
+function _rulesDirectory($type = 'insert')
+{
+    $rules = [
+        'name' => 'required|string|maxLength:255',
+        'user_preferred_name' => 'required|string|maxLength:20',
+        'email' => 'required|email|minLength:5|maxLength:255',
+        'user_gender' => 'integer|minLength:5|maxLength:255',
+        'user_dob' => 'required|date',
+        'username' => 'required|string|maxLength:255',
+        'password' => 'required|string|maxLength:255',
+        'user_status' => 'required|integer'
+    ];
+
+    if ($type == 'update')
+        $rules['id'] = 'required|integer';
+
+    return $rules;
+}

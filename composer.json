@@ -1,0 +1,20 @@
+{
+	"description": "PHP Native",
+	"type": "project",
+	"license": "MIT",
+	"suggest": {
+		"paragonie/random_compat": "Provides better randomness in PHP 7.x"
+	},
+	"autoload": {
+		"psr-4": {
+			"Sys\\": "system/",
+			"App\\": "app/"
+		}
+	},
+	"require": {
+		"php": ">=8.0",
+		"phpoffice/phpspreadsheet": "^1.29",
+		"voku/anti-xss": "^4.1",
+		"phpmailer/phpmailer": "^6.8"
+	}
+}
