@@ -1,5 +1,6 @@
 <?php
 $loginRequired = true;
+$permissionPage = NULL;
 $titlePage = "Tetapan";
 $currentPage = 'settings';
 include 'template/header.php';

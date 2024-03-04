@@ -1,5 +1,6 @@
 <?php
 $loginRequired = true;
+$permissionPage = NULL;
 $titlePage = "Rekod";
 $currentPage = 'records';
 include 'template/header.php';

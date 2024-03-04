@@ -62,15 +62,37 @@ function hasPermission($slug = NULL)
 		return empty($slug) ? true : in_array($slug, $sessionPermission) || in_array('*', $sessionPermission);
 	}
 
-	return empty($slug) ? true : false;
+	return empty($slug);
 }
+
+function hasAccessPage($slug = NULL, $redirect = false)
+{
+	$sessionPermission = getSession('permission');
+
+	$checkAccess = false;
+	if (!empty($sessionPermission)) {
+		$checkAccess = empty($slug) ? true : in_array($slug, $sessionPermission) || in_array('*', $sessionPermission);
+	}
+
+	if (!empty($slug) && !$checkAccess) {
+		if ($redirect) {
+			error_page('403');
+			exit;
+		} else {
+			die("No access to this page");
+		}
+	}
+
+	return $checkAccess;
+}
+
 
 // Image Session
 
 function isExistImage($path, $default = 'profile')
 {
 	$list = [
-		'profile' => 'public/general/images/user.png',
+		'profile' => 'public' . DIRECTORY_SEPARATOR . 'general' . DIRECTORY_SEPARATOR . 'images' . DIRECTORY_SEPARATOR . 'user.png',
 	];
 
 	return !empty($path) && file_exists($path) ? $path : (array_key_exists($default, $list) ? $list[$default] : '');

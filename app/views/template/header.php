@@ -31,6 +31,7 @@
     <?php
     include_once '../../init.php';
     isLogin($loginRequired, 'isLogIn', 'app/views/auth-login');
+    hasAccessPage($permissionPage, true);
     ?>
 
     <title><?= APP_NAME ?> | <?= $titlePage ?> </title>

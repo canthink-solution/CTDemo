@@ -1,5 +1,6 @@
 <?php
 $loginRequired = true;
+$permissionPage = 'dashboard-view';
 $titlePage = "Direktori";
 $currentPage = 'directory';
 include 'template/header.php';
@@ -65,7 +66,7 @@ include 'template/header.php';
 
 <script type="text/javascript">
     $(document).ready(async function() {
-        await getDataList();
+        // await getDataList();
     });
 
     const getDataList = () => {
@@ -86,7 +87,13 @@ include 'template/header.php';
     function userForm(data = null) {
         const header = hasData(data) ? 'Kemaskini Kakitangan' : 'Tambah Kakitangan';
         const urlAction = hasData(data) ? 'updateUser' : 'createUser';
-        loadFormContent('modals/_userDirectoryForm.php', '750px', urlAction, header, data, 'offcanvas');
+
+        const dataSent = {
+            ...data,
+            'action': urlAction
+        };
+
+        loadFormContent('modals/_userDirectoryForm.php', '500px', `DirectoryController`, header, dataSent, 'offcanvas');
     }
 </script>
 

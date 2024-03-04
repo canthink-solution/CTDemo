@@ -1,5 +1,6 @@
 <?php
 $loginRequired = false; // set this to true if this page required login session
+$permissionPage = NULL;
 $titlePage = "Welcome";
 $currentPage = 'welcome';
 include 'template/header.php';

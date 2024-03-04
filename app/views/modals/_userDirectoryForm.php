@@ -1,85 +1,20 @@
 <form id="formUser" action="user/save" method="POST">
 
     <div class="row">
-        <div class="col-md-2">
-            <label class="form-label">Salutation <span class="text-danger">*</span> </label>
-            <select id="user_salutation" name="user_salutation" class="form-control" required>
-                <option value=""> - Select - </option>
-                <option value="MR"> Encik / Mr </option>
-                <option value="MRS"> Puan / Mrs </option>
-                <option value="MS"> Cik / Ms </option>
-                <option value="DR"> Dr </option>
-                <option value="DATO"> Dato' </option>
-                <option value="DATIN"> Datin </option>
-                <option value="TAN SRI"> Tan Sri </option>
-                <option value="PUAN SRI"> Puan Sri </option>
-            </select>
-        </div>
-        <div class="col-md-10">
-            <label class="form-label">Full Name <span class="text-danger">*</span></label>
-            <input type="text" id="name" name="name" class="form-control" maxlength="100" autocomplete="off" onKeyUP="this.value = this.value.toUpperCase();" required>
-        </div>
-    </div>
-
-    <div class="row mt-2">
-        <div class="col-md-6">
-            <label class="form-label">Preferred Name <span class="text-danger">*</span></label>
-            <input type="text" id="user_preferred_name" name="user_preferred_name" class="form-control maxlength-input" maxlength="15" autocomplete="off" onKeyUP="ucfirstVal(this.value, 'user_preferred_name');" required>
-        </div>
-        <div class="col-md-6">
-            <label class="form-label">NRIC No.<span class="text-danger">*</span></label>
-            <input type="text" id="user_nric" name="user_nric" class="form-control maxlength-input" maxlength="15" autocomplete="off" required>
-        </div>
-    </div>
-
-    <div class="row mt-2">
-        <div class="col-md-6">
-            <label class="form-label">Email <span class="text-danger">*</span></label>
-            <input type="email" id="user_email" name="user_email" class="form-control maxlength-input" maxlength="50" autocomplete="off" required>
-        </div>
-        <div class="col-md-6">
-            <label class="form-label">Contact / HP No <span class="text-danger">*</span></label>
-            <input type="text" id="user_contact_no" name="user_contact_no" class="form-control maxlength-input" maxlength="13" autocomplete="off" onkeypress="return isNumberKey(event)" required>
-        </div>
-    </div>
-
-    <div class="row mt-2">
         <div class="col-md-12">
-            <label class="form-label"> Address <span class="text-danger">*</span></label>
-            <textarea id="user_address" name="user_address" class="form-control maxlength-input" maxlength="250" autocomplete="off" rows="3" onKeyUP="this.value = this.value.toUpperCase();" required></textarea>
+            <label class="form-label"> Full Name <span class="text-danger">*</span></label>
+            <input type="text" id="name" name="name" class="form-control" maxlength="250" autocomplete="off" onKeyUP="this.value = this.value.toUpperCase();" required>
         </div>
     </div>
 
     <div class="row mt-2">
-        <div class="col-md-4">
-            <label class="form-label"> Postal Code <span class="text-danger">*</span></label>
-            <input type="text" id="user_postcode" name="user_postcode" class="form-control maxlength-input" maxlength="8" autocomplete="off" onkeypress="return isNumberKey(event)" required>
+        <div class="col-md-6">
+            <label class="form-label"> Preferred Name <span class="text-danger">*</span></label>
+            <input type="text" id="user_preferred_name" name="user_preferred_name" class="form-control" maxlength="15" autocomplete="off" required>
         </div>
-        <div class="col-md-4">
-            <label class="form-label"> City <span class="text-danger">*</span></label>
-            <input type="text" id="user_city" name="user_city" class="form-control maxlength-input" maxlength="25" autocomplete="off" onKeyUP="this.value = this.value.toUpperCase();" required>
-        </div>
-        <div class="col-md-4">
-            <label class="form-label"> State <span class="text-danger">*</span></label>
-            <select id="user_state" name="user_state" class="form-control" required>
-                <option value=""> - Select - </option>
-                <option value="JOHOR">Johor</option>
-                <option value="KEDAH">Kedah</option>
-                <option value="KELANTAN">Kelantan</option>
-                <option value="KUALA LUMPUR">Kuala Lumpur</option>
-                <option value="LABUAN">Labuan</option>
-                <option value="MELAKA">Melaka</option>
-                <option value="NEGERI SEMBILAN">Negeri Sembilan</option>
-                <option value="PAHANG">Pahang</option>
-                <option value="PULAU PINANG">Pulau Pinang</option>
-                <option value="PERAK">Perak</option>
-                <option value="PERLIS">Perlis</option>
-                <option value="PUTRAJAYA">Putrajaya</option>
-                <option value="SABAH">Sabah</option>
-                <option value="SARAWAK">Sarawak</option>
-                <option value="SELANGOR">Selangor</option>
-                <option value="TERENGGANU">Terengganu</option>
-            </select>
+        <div class="col-md-6">
+            <label class="form-label"> Email <span class="text-danger">*</span></label>
+            <input type="email" id="email" name="email" class="form-control" maxlength="120" autocomplete="off" required>
         </div>
     </div>
 
@@ -88,30 +23,20 @@
             <label class="form-label"> Gender <span class="text-danger">*</span></label>
             <select id="user_gender" name="user_gender" class="form-control" required>
                 <option value=""> - Select - </option>
-                <option value="Male"> Male </option>
-                <option value="Female"> Female </option>
+                <option value="1"> Male </option>
+                <option value="0"> Female </option>s
             </select>
         </div>
         <div class="col-md-4">
-            <label class="form-label"> Religion </label>
-            <select id="user_religion" name="user_religion" class="form-control">
-                <option value=""> - Select - </option>
-                <option value="Islam"> Islam </option>
-                <option value="Buddhism"> Buddhism </option>
-                <option value="Christianity"> Christianity </option>
-                <option value="Hinduism"> Hinduism </option>
-                <option value="Sikhism "> Sikhism </option>
-                <option value="Others"> Others </option>
-            </select>
+            <label class="form-label"> Birth Date </label>
+            <input type="date" id="user_dob" name="user_dob" class="form-control">
         </div>
         <div class="col-md-4">
-            <label class="form-label"> Race </label>
-            <select id="user_race" name="user_race" class="form-control">
+            <label class="form-label"> Status </label>
+            <select id="user_status" name="user_status" class="form-control">
                 <option value=""> - Select - </option>
-                <option value="Melayu"> Melayu </option>
-                <option value="Chinese"> Chinese </option>
-                <option value="Indian"> Indian </option>
-                <option value="Others"> Others </option>
+                <option value="1"> Active </option>
+                <option value="0"> Inactive </option>
             </select>
         </div>
     </div>
@@ -121,7 +46,8 @@
             <span class="text-danger">* Indicates a required field</span>
             <center>
                 <input type="hidden" id="id" name="id" class="form-control" readonly>
-                <button type="submit" id="submitBtn" class="btn btn-info"> <i class='fa fa-save'></i> Simpan </button>
+                <input type="hidden" id="action" name="action" value="" class="form-control" readonly>
+                <button type="submit" id="submitBtn" class="btn btn-info"> <i class='fa fa-save'></i> &nbsp; Simpan </button>
             </center>
         </div>
     </div>
@@ -133,15 +59,65 @@
         // await getDataCount();
     }
 
-    // async function getDataCount() {
-    //     const res = await callApi('post', "DirectoryController", {
-    //         'action': 'getUserByID',
-    //         'id': 1
-    //     });
+    $("#formUser").submit(function(event) {
+		event.preventDefault();
 
-    //     if (isSuccess(res)) {
-    //         const dataRes = res.data;
-    //        log(JSON.stringify(dataRes));
-    //     }
-    // }
+		if (validateData()) {
+
+			const form = $(this);
+			const url = form.attr('action');
+
+			Swal.fire({
+				title: 'Are you sure?',
+				html: "Form will be submitted!",
+				icon: 'warning',
+				showCancelButton: true,
+				confirmButtonColor: '#3085d6',
+				cancelButtonColor: '#d33',
+				confirmButtonText: 'Yes, Confirm!',
+				reverseButtons: true,
+                customClass: {
+					container: 'swal2-customCss'
+				},
+			}).then(
+				async (result) => {
+					if (result.isConfirmed) {
+						const res = await submitApi(url, form.serializeArray(), 'formUser');
+						if (isSuccess(res)) {
+							if (isSuccess(res.data.resCode)) {
+								noti(res.status, 'Save');
+								getDataList();
+							} else {
+								noti(400, res.data.message)
+							}
+						}
+					}
+				});
+		} else {
+			validationJsError('toastr', 'single'); // single or multi
+		}
+	});
+
+    function validateData() {
+
+        const rules = {
+            'name': 'required|min:5|max:255',
+            'user_preferred_name': 'required|min:3|max:10',
+            'email': 'required|email|min:5|max:150',
+            'user_gender': 'required|integer',
+            'user_dob': 'required',
+            'user_status': 'required|integer',
+        };
+
+        const message = {
+            'name': 'Full Name',
+            'user_preferred_name': 'Preferred Name',
+            'email': 'Email',
+            'user_gender': 'Gender',
+            'user_dob': 'Birth Date',
+            'user_status': 'Status',
+        };
+
+        return validationJs(rules, message);
+    }
 </script>
