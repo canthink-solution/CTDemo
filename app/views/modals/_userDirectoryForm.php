@@ -21,10 +21,10 @@
     <div class="row mt-2">
         <div class="col-md-4">
             <label class="form-label"> Gender <span class="text-danger">*</span></label>
-            <select id="user_gender" name="user_gender" class="form-control" required>
+            <select id="user_gender" name="user_gender" class="form-control">
                 <option value=""> - Select - </option>
                 <option value="1"> Male </option>
-                <option value="0"> Female </option>s
+                <option value="0"> Female </option>
             </select>
         </div>
         <div class="col-md-4">
@@ -84,7 +84,7 @@
 					if (result.isConfirmed) {
 						const res = await submitApi(url, form.serializeArray(), 'formUser');
 						if (isSuccess(res)) {
-							if (isSuccess(res.data.resCode)) {
+							if (isSuccess(res.data.code)) {
 								noti(res.status, 'Save');
 								getDataList();
 							} else {
@@ -109,7 +109,7 @@
             'user_status': 'required|integer',
         };
 
-        const message = {
+        const customMessage = {
             'name': 'Full Name',
             'user_preferred_name': 'Preferred Name',
             'email': 'Email',
@@ -118,6 +118,6 @@
             'user_status': 'Status',
         };
 
-        return validationJs(rules, message);
+        return validationJs(rules, customMessage);
     }
 </script>

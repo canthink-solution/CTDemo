@@ -5,7 +5,6 @@ include_once '../../init.php';
 // Check if request comes from within the application
 if (!isAjax()) error_page('403');
 
-
 function getUserByID($request = null)
 {
     $data = db()->table('users')
@@ -38,12 +37,12 @@ function createUser($request = null)
         'email' => request('email'),
         'user_gender' => request('user_gender'),
         'user_dob' => request('user_dob'),
-        'username' => request('username'),
-        'password' => request('password'),
+        'username' => request('email'),
+        // 'password' => request('password'),
         'user_status' => request('user_status')
     ];
 
-    $validate = validate($data, _rulesDirectory('insert'));
+    $validate = validate($data, _rulesDirectory('insert'), _rulesCustomErrorMessage()); // with custom error message
     $result = $validate['result'] ? db()->insert('users', $data) : $validate['error'];
 
     json($result);
@@ -58,12 +57,12 @@ function updateUser($request = null)
         'email' => request('email'),
         'user_gender' => request('user_gender'),
         'user_dob' => request('user_dob'),
-        'username' => request('username'),
-        'password' => request('password'),
+        'username' => request('email'),
+        // 'password' => request('password'),
         'user_status' => request('user_status')
     ];
 
-    $validate = validate($data, _rulesDirectory('update'));
+    $validate = validate($data, _rulesDirectory('update')); // without custom error message
     $result = $validate['result'] ? db()->update('users', $data, ['id' => request('id')]) : $validate['error'];
 
     json($result);
@@ -75,10 +74,10 @@ function _rulesDirectory($type = 'insert')
         'name' => 'required|string|maxLength:255',
         'user_preferred_name' => 'required|string|maxLength:20',
         'email' => 'required|email|minLength:5|maxLength:255',
-        'user_gender' => 'integer|minLength:5|maxLength:255',
+        'user_gender' => 'integer|maxLength:1',
         'user_dob' => 'required|date',
         'username' => 'required|string|maxLength:255',
-        'password' => 'required|string|maxLength:255',
+        // 'password' => 'required|string|maxLength:255',
         'user_status' => 'required|integer'
     ];
 
@@ -86,4 +85,13 @@ function _rulesDirectory($type = 'insert')
         $rules['id'] = 'required|integer';
 
     return $rules;
+}
+
+function _rulesCustomErrorMessage() {
+    return [
+        'user_gender' => [
+            'fields' => 'Jantina', // This will replace the key from user_gender to Jantina
+            'integer' => 'Medan Jantina ini memerlukan data berbentuk nombor',
+        ]
+    ];
 }

@@ -46,9 +46,9 @@ function connect($connection = 'default')
 
 // VALIDATION SECTION
 
-function validate($data, $rules)
+function validate($data, $rules, $customMessage = NULL)
 {
-    $valid = new Validation($data, $rules);
+    $valid = new Validation($data, $rules, $customMessage);
     return ['result' => $valid->validate(), 'error' => $valid->getError()];
 }
 

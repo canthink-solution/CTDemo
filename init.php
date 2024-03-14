@@ -209,13 +209,6 @@ $menuList = [
     'permission' => NULL,
   ],
   [
-    'currentPage' => 'records', // use in each file (without whitespace or any character)
-    'desc' => 'Rekod',
-    'url' => 'app/views/task-records',
-    'icon' => 'tf-icons bx bx-list-ol',
-    'permission' => 'record-view',
-  ],
-  [
     'currentPage' => 'directory', // use in each file (without whitespace or any character)
     'desc' => 'Pengguna',
     'url' => 'app/views/directory',

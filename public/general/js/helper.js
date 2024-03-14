@@ -1818,7 +1818,6 @@ const submitApi = async (url, dataObj, formID = null, reloadFunction = null, clo
 
 					loadingBtn(submitIdBtn, false, submitBtnText);
 					return result;
-
 				})
 				.catch(error => {
 
@@ -1833,6 +1832,8 @@ const submitApi = async (url, dataObj, formID = null, reloadFunction = null, clo
 						log(error, 'Response Submit Api 1');
 					}
 
+					loadingBtn(submitIdBtn, false, submitBtnText);
+
 					return error.response;
 
 				});
@@ -1840,7 +1841,7 @@ const submitApi = async (url, dataObj, formID = null, reloadFunction = null, clo
 			const res = e.response;
 			log(res, 'ERROR 2 Submit');
 
-			loadingBtn(submitIdBtn, false);
+			loadingBtn(submitIdBtn, false, submitBtnText);
 
 			if (isUnauthorized(res.status)) {
 				noti(res.status, "Unauthorized: Access is denied");
@@ -1861,7 +1862,8 @@ const submitApi = async (url, dataObj, formID = null, reloadFunction = null, clo
 		}
 	} else {
 		noti(400, "No data to insert!");
-		loadingBtn('submitBtn', false);
+		loadingBtn(submitIdBtn, false, submitBtnText);
+
 	}
 }
 

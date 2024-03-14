@@ -68,7 +68,8 @@ $audit = [
     'column' => [
         "id",
         "user_id",
-        "user_fname",
+        "role_id",
+        "user_fullname",
         "event",
         "table_name",
         "old_values",

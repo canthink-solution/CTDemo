@@ -26,6 +26,11 @@ class Validation
     protected array $rules;
 
     /**
+     * @var array Holds the custom error message.
+     */
+    protected array $customMessage;
+
+    /**
      * @var array Holds the validation results.
      */
     protected array $errors = [];
@@ -36,10 +41,11 @@ class Validation
      * @param array $data The data to be validated.
      * @param array|null $rules Optional. The validation rules.
      */
-    public function __construct(array $data = [], ?array $rules = null)
+    public function __construct(array $data = [], ?array $rules = null, ?array $customMessage = null)
     {
         $this->data = $data;
         $this->rules = $rules ?? [];
+        $this->customMessage = $customMessage ?? [];
     }
 
     /**
@@ -98,7 +104,7 @@ class Validation
                     if ($isRequired || !$this->isEmptyOrNull($fieldData)) {
                         // Perform validation
                         $valid = $this->$method($fieldData, $params);
-                        if (!$valid) {
+                        if (!$valid && $fieldData != 0) {
                             $this->errors[] = $this->getErrorMessage($field, $ruleName, $params);
                         }
                     } else {
@@ -190,18 +196,30 @@ class Validation
      */
     protected function getFieldValue(string $field, array $data)
     {
+        // Split the field into keys
         $keys = explode('.', $field);
 
-        // Traverse through the nested array to retrieve the value
-        foreach ($keys as $key) {
+        // Recursive function to search for the value corresponding to the key
+        $getValue = function ($keys, $data) use (&$getValue) {
+            // Get the first key
+            $key = array_shift($keys);
+
+            // If the key is not set in the data, return null
             if (!isset($data[$key])) {
                 return null;
             }
 
-            $data = $data[$key];
-        }
+            // If there are more keys to search and the current value is an array, recursively search
+            if (!empty($keys) && is_array($data[$key])) {
+                return $getValue($keys, $data[$key]);
+            }
 
-        return $data;
+            // If no more keys to search or the current value is not an array, return the value
+            return $data[$key];
+        };
+
+        // Call the recursive function with keys and data
+        return $getValue($keys, $data);
     }
 
     // Validation rules implementation
@@ -209,7 +227,7 @@ class Validation
     // Rule: Required
     protected function validateRequired($value): bool
     {
-        return !empty($value);
+        return $value !== 0 && !empty($value);
     }
 
     // Rule: String
@@ -333,6 +351,19 @@ class Validation
      */
     protected function getErrorMessage(string $field, string $ruleName, array $params): string
     {
+        // Check if $this->customMessage is not null and if there's a custom message for the given field and rule
+        if (!is_null($this->customMessage) && isset($this->customMessage[$field])) {
+            // Return the custom error message for the field and rule
+            if (isset($this->customMessage[$field][$ruleName])) {
+                return $this->customMessage[$field][$ruleName];
+            }
+
+            // If a custom field name is provided, update the field variable
+            if (isset($this->customMessage[$field]['fields'])) {
+                $field = $this->customMessage[$field]['fields'];
+            }
+        }
+
         switch ($ruleName) {
             case 'required':
                 return "The $field field is required.";
