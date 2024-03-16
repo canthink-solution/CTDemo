@@ -136,7 +136,7 @@ class TaskRunner
 
             // Wait until all processes are done
             while ($this->hasRunningProcesses()) {
-                $this->waitForRunningTasks($this->runningTasks);
+                $this->waitForRunningTasks($runningProcesses, true); // Set a flag to indicate waiting for deadlock resolution
             }
 
             $endTime = microtime(true); // Record end time
@@ -168,36 +168,55 @@ class TaskRunner
         }
 
         // Wait for remaining tasks in the chunk to complete
-        $this->waitForRunningTasks($runningProcesses);
+        $this->waitForRunningTasks($runningProcesses, true); // Set a flag to indicate waiting for deadlock resolution
     }
 
     /**
      * Wait for running tasks to complete.
      *
      * @param array $runningProcesses Array of running processes
+     * @param bool $resolveDeadlock Flag to indicate waiting for deadlock resolution
      */
-    private function waitForRunningTasks(&$runningProcesses)
+    private function waitForRunningTasks(&$runningProcesses, $resolveDeadlock = false)
     {
-        foreach ($runningProcesses as $key => $processDetails) {
-            $process = $processDetails['process'];
-            $pid = $this->getPid($process);
+        $startWaitingTime = microtime(true);
 
-            // Check if process is still running
-            $isRunning = $this->isProcessRunning($process);
-            // $this->print("TaskRunner - Process #{$pid} still running? " . ($isRunning ? "Yes" : "No"));
+        // Loop until either all tasks are completed or deadlock resolution time is exceeded
+        while (!empty($runningProcesses)) {
+            foreach ($runningProcesses as $key => $processDetails) {
+                $process = $processDetails['process'];
+                $pid = $this->getPid($process);
 
-            // Check if process is still running
-            if (!$isRunning) {
-                // Print task completion information
-                $this->printTaskCompletion($processDetails);
-                unset($runningProcesses[$key]); // Remove completed process
-            } else {
-                // Check if the process has exceeded the timeout
-                if (microtime(true) - $processDetails['start_time'] > $this->processTimeout) {
-                    $this->print("TaskRunner - Timeout reached for PID: {$pid}. Killing process...");
-                    proc_terminate($process);
-                    unset($runningProcesses[$key]); // Remove timeout process
+                // Check if process is still running
+                $isRunning = $this->isProcessRunning($process);
+                // $this->print("TaskRunner - Process #{$pid} still running? " . ($isRunning ? "Yes" : "No"));
+
+                // Check if process is still running
+                if (!$isRunning) {
+                    // Print task completion information
+                    $this->printTaskCompletion($processDetails);
+                    unset($runningProcesses[$key]); // Remove completed process
+                } else {
+                    // Check if the process has exceeded the timeout
+                    $elapsedTime = microtime(true) - $processDetails['start_time'];
+                    // Check if the process has exceeded the timeout
+                    if ($elapsedTime > $this->processTimeout) {
+                        if ($resolveDeadlock) {
+                            $command = $processDetails['command'];
+                            // Handle deadlock resolution here, e.g., by forcefully terminating the process
+                            $this->print("TaskRunner - Timeout reached for PID: {$pid}, Task : {$command}. Handling deadlock...");
+                            proc_terminate($process);
+                            unset($runningProcesses[$key]); // Remove deadlock process
+                        } else {
+                            continue; // If deadlock resolution is not enabled, simply wait
+                        }
+                    }
                 }
+            }
+
+            // If deadlock resolution is enabled and waiting time exceeds the resolution time, break the loop
+            if ($resolveDeadlock && (microtime(true) - $startWaitingTime) > $this->processTimeout) {
+                break;
             }
         }
 
@@ -212,26 +231,28 @@ class TaskRunner
      */
     private function executeTask($task)
     {
-        try {
-            $command = $this->jobsDir . $task['command'];
-            $params = implode(' ', $task['params']);
-            $descriptors = [
-                ['pipe', 'r'],
-                ['file', $this->logPath, 'a'],
-                ['file', $this->logPath, 'a'],
-            ];
+        $filePath = $this->jobsDir . $task['command'];
+        $params = !empty($task['params']) ? implode(' ', $task['params']) : NULL;
+        $descriptors = [
+            ['pipe', 'r'],
+            ['file', $this->logPath, 'a'],
+            ['file', $this->logPath, 'a'],
+        ];
 
+        $command = "{$this->phpCommand} $filePath $params";
+
+        try {
             // Open a process for the task
-            $process = proc_open("{$this->phpCommand} $command $params", $descriptors, $pipes);
+            $process = proc_open($command, $descriptors, $pipes);
             if (is_resource($process)) {
                 // Add task to running tasks list
                 $pid = $this->getPid($process);
-                $this->print("TaskRunner - Start (PID: {$pid})");
-                $details = ['process' => $process, 'start_time' => microtime(true)];
+                $this->print("TaskRunner - Start (PID: {$pid}) '$command'");
+                $details = ['process' => $process, 'command' => $command, 'start_time' => microtime(true)];
                 $this->runningTasks[$pid] = $details;
                 return $details;
             } else {
-                $this->print("Failed to start process for task.");
+                $this->print("Failed to start process for task '$command'.");
                 return null;
             }
         } catch (\Exception $e) {
@@ -284,22 +305,22 @@ class TaskRunner
     private function printTaskCompletion($task)
     {
         // Check if $task['process'] is a valid resource
-        if (!is_resource($task['process'])) {
-            $pidInfo = "Unknown PID";
-        } else {
+        if (is_resource($task['process'])) {
             $pid = $this->getPid($task['process']);
             $pidInfo = $pid !== null ? "(PID: $pid)" : "Unknown PID";
             // Close the process if it's still running
             if ($pid !== null) {
                 proc_close($task['process']);
             }
+
+            // Calculate the time taken for the task
+            $costSeconds = number_format(microtime(true) - $task['start_time'], 2, '.', '');
+
+            $command = $task['command'];
+
+            // Print task completion information
+            $this->print("TaskRunner - Close $pidInfo '$command' | cost: {$costSeconds}s");
         }
-
-        // Calculate the time taken for the task
-        $costSeconds = number_format(microtime(true) - $task['start_time'], 2, '.', '');
-
-        // Print task completion information
-        $this->print("TaskRunner - Close $pidInfo | cost: {$costSeconds}s");
     }
 
     /**
