@@ -3,6 +3,7 @@
 use Sys\framework\Database;
 use Sys\framework\Validation;
 use Sys\framework\Logger;
+use Sys\framework\TaskRunner;
 
 function db($connection = 'default')
 {
@@ -77,4 +78,11 @@ function log_message($type = 'info', $message = null)
             $logger->error("Invalid log message type: $type - $message");
             break;
     }
+}
+
+// TASK RUNNER SECTION
+
+function TaskRunParallel()
+{
+    return new TaskRunner();
 }

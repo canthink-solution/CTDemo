@@ -263,3 +263,21 @@ function testDeleteFunc($request = null)
     $result = db()->delete('entity_address', ['id' => 5]);
     json($result);
 }
+
+/**
+ * Test Task Runner function
+ *
+ * @param array|null $request The request parameters.
+ * @return void
+ */
+function testRunnerFunc($request = null)
+{
+    $task = TaskRunParallel(); // create new object 
+    $task->setMaxConcurrentTasks(3);
+    $task->setLogPath('logs/TestCase.log');
+    // Add 1000 tasks
+    for ($i = 1; $i <= 1000; $i++) {
+        $task->addTask("TestCase{$i}.php", ["param1", "param2", "param3"]);
+    }
+    $task->run();
+}

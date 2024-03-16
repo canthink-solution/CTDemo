@@ -1,8 +1,8 @@
 <?php
 $loginRequired = false; // set this to true if this page required login session
 $permissionPage = NULL;
-$titlePage = "Welcome";
-$currentPage = 'welcome';
+$titlePage = "Example";
+$currentPage = 'example';
 include 'template/header.php';
 ?>
 
@@ -47,6 +47,11 @@ include 'template/header.php';
                                 <button type="button" class="btn btn-outline-warning btn-sm float-end ms-2" onclick="loadModalDynamic('fullscreen')" title="load modal fullscreen">
                                     <i class="fa-regular fa-window-restore"></i> &nbsp; Modal FullScreen (BS5)
                                 </button>
+
+                                <button type="button" class="btn btn-info btn-sm float-end ms-2" onclick="testRunTask()" title="Task Runner Parallel">
+                                    <i class="fa fa-tasks"></i> &nbsp; Task Runner
+                                </button>
+
                             </div>
                         </div>
                     </div>
@@ -80,7 +85,7 @@ include 'template/header.php';
                                             </tbody>
                                         </table>
                                         <center>
-                                        <div id="paginate" class="mt-3 text-center"></div>
+                                            <div id="paginate" class="mt-3 text-center"></div>
                                         </center>
                                     </div>
                                 </div>
@@ -90,6 +95,7 @@ include 'template/header.php';
                                 <div id="testInsert"></div>
                                 <div id="testUpdate"></div>
                                 <div id="testDelete"></div>
+                                <div id="testRunTask"></div>
                             </div>
                         </div>
                     </div>
@@ -120,6 +126,7 @@ include 'template/header.php';
         // await testInsert();
         // await testUpdate();
         // await testDelete();
+        await testRunTask();
     }
 
     async function getSqlString() {
@@ -271,7 +278,18 @@ include 'template/header.php';
             $('#testDelete').html(`<b>Test 13</b> : Return the data delete. <br> Result : ${JSON.stringify(data)} <br> <br> <hr>`);
         }
     }
-    
+
+    async function testRunTask() {
+        const res = await callApi('post', "ExampleController", {
+            'action': 'testRunnerFunc'
+        });
+
+        if (isSuccess(res)) {
+            const data = res.data;
+            $('#testRunTask').html(`<b>Test 14</b> : -. <br> Result : Please open log files in folder storage/logs after click Task Runner button <br> <br> <hr>`);
+        }
+    }
+
     // EXAMPLE FOR LOAD DYNAMIC MODAL
 
     function loadModalOffcanvas() {
