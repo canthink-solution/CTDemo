@@ -51,7 +51,6 @@ include 'template/header.php';
                                 <button type="button" class="btn btn-info btn-sm float-end ms-2" onclick="testRunTask()" title="Task Runner Parallel">
                                     <i class="fa fa-tasks"></i> &nbsp; Task Runner
                                 </button>
-
                             </div>
                         </div>
                     </div>
@@ -96,6 +95,14 @@ include 'template/header.php';
                                 <div id="testUpdate"></div>
                                 <div id="testDelete"></div>
                                 <div id="testRunTask"></div>
+                                <div id="testUploadFiles">
+                                    <form id="submitFile" action="ExampleController" method="post" enctype="multipart/form-data">
+                                        <label for="file">Select file(s) to upload:</label><br>
+                                        <input type="file" id="file" name="file"><br><br>
+                                        <input type="hidden" id="action" name="action" value="testUploadFunc" class="form-control" readonly>
+                                        <input type="submit" id="submitBtn" value="Upload">
+                                    </form>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -119,14 +126,14 @@ include 'template/header.php';
         await fetchDataWithConditions();
         await getDataPaginate();
         await getDataCount();
-        await getDataJoin();
+        // await getDataJoin();
         await getDataSlaveDB();
         await getValidationData();
         // await testLogger();
         // await testInsert();
         // await testUpdate();
         // await testDelete();
-        await testRunTask();
+        // await testRunTask();
     }
 
     async function getSqlString() {
@@ -289,6 +296,19 @@ include 'template/header.php';
             $('#testRunTask').html(`<b>Test 14</b> : -. <br> Result : Please open log files in folder storage/logs after click Task Runner button <br> <br> <hr>`);
         }
     }
+
+    $("#submitFile").submit(async function(event) {
+        event.preventDefault();
+
+        const form = $(this);
+        let url = form.attr('action');
+        const fr = $("#submitFile");
+        const dataArr = new FormData(fr[0]);
+
+        const res = await submitApi(url, form.serializeArray(), 'submitFile');
+        if (isSuccess(res.data.code))
+            noti(res.data.code, res.data.message);
+    });
 
     // EXAMPLE FOR LOAD DYNAMIC MODAL
 

@@ -1784,15 +1784,21 @@ const submitApi = async (url, dataObj, formID = null, reloadFunction = null, clo
 		url = urls(`app/controllers/${url}`);
 
 		try {
-			var frm = $('#' + formID);
+			var frm = $(`#${formID}`);
 			const dataArr = new FormData(frm[0]);
+
+			// Check if the form has file inputs
+			const hasFileInputs = frm.find('input[type=file]').length > 0;
+
+			// Set headers dynamically based on whether the form has file inputs
+			const headers = {
+				'X-Requested-With': 'XMLHttpRequest',
+				'content-Type': hasFileInputs ? 'multipart/form-data' : 'application/x-www-form-urlencoded',
+			};
 
 			return axios({
 				method: 'POST',
-				headers: {
-					'X-Requested-With': 'XMLHttpRequest',
-					'content-type': 'application/x-www-form-urlencoded',
-				},
+				headers: headers,
 				url: url,
 				data: dataArr
 			})
@@ -2014,31 +2020,31 @@ const noti = (code = 400, text = 'Something went wrong') => {
 
 	var messages = Array.isArray(text) ? text : [text]; // Convert to array if not already
 
-    messages.forEach((message) => {
-        var messageText = isSuccess(resCode) ? ucfirst(message) + ' successfully' : isUnauthorized(resCode) ? 'Unauthorized: Access is denied' : isError(resCode) ? message : 'Something went wrong';
-        var type = isSuccess(code) ? 'success' : 'error';
-        var title = isSuccess(code) ? 'Great!' : 'Ops!';
+	messages.forEach((message) => {
+		var messageText = isSuccess(resCode) ? ucfirst(message) + ' successfully' : isUnauthorized(resCode) ? 'Unauthorized: Access is denied' : isError(resCode) ? message : 'Something went wrong';
+		var type = isSuccess(code) ? 'success' : 'error';
+		var title = isSuccess(code) ? 'Great!' : 'Ops!';
 
-        toastr.options = {
-            "debug": false,
-            "closeButton": !isMobileJs(),
-            "newestOnTop": true,
-            "progressBar": !isMobileJs(),
-            "positionClass": !isMobileJs() ? "toast-top-right" : "toast-bottom-full-width",
-            "preventDuplicates": isMobileJs(),
-            "onclick": null,
-            "showDuration": "500",
-            "hideDuration": "1000",
-            "timeOut": "5000",
-            "extendedTimeOut": "1000",
-            "showEasing": "swing",
-            "hideEasing": "linear",
-            "showMethod": "fadeIn",
-            "hideMethod": "fadeOut"
-        }
+		toastr.options = {
+			"debug": false,
+			"closeButton": !isMobileJs(),
+			"newestOnTop": true,
+			"progressBar": !isMobileJs(),
+			"positionClass": !isMobileJs() ? "toast-top-right" : "toast-bottom-full-width",
+			"preventDuplicates": isMobileJs(),
+			"onclick": null,
+			"showDuration": "500",
+			"hideDuration": "1000",
+			"timeOut": "5000",
+			"extendedTimeOut": "1000",
+			"showEasing": "swing",
+			"hideEasing": "linear",
+			"showMethod": "fadeIn",
+			"hideMethod": "fadeOut"
+		}
 
-        Command: toastr[type](messageText, title)
-    });
+		Command: toastr[type](messageText, title)
+	});
 }
 
 const isSuccess = (res) => {

@@ -11,11 +11,19 @@ namespace Sys\framework;
  * @package   Logging
  * @author    Mohd Fahmy Izwan Zulkhafri <faizzul14@gmail.com>
  * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License
- * @link      http://example.com
+ * @link      -
  * @version   1.0.0
  */
 class Logger
 {
+    /**
+     * @var string The path
+     */
+    private $path = '../../';
+
+    /**
+     * @var string The directory path where logs files will be stored.
+     */
     private $logFilePath = '../../storage/logs/debug.log';
 
     /**
@@ -48,15 +56,21 @@ class Logger
     /**
      * Logs a message to the log file with the specified type.
      *
-     * @param string $type    The type of log message (DEBUG, ERROR, INFO).
      * @param string $message The message to be logged.
+     * @param string $type    The type of log message (DEBUG, ERROR, INFO).
      * @return void
      */
-    public function log($message)
+    public function log($message, $type = NULL)
     {
-        $formattedMessage = "[" . APP_TIMEZONE . "][" . date('Y-m-d h:i:s A') . "] - $message\n";
+        $formattedMessage = '[' . date('Y-m-d h:i:s A') . ']';
+        if (!is_null($type)) {
+            $formattedMessage .= ' [' . strtoupper($type) . ']';
+        }
+        $formattedMessage .= ' - ' . $message . PHP_EOL;
+
         file_put_contents($this->logFilePath, $formattedMessage, FILE_APPEND);
     }
+
     /**
      * Logs a debug message.
      *
@@ -66,8 +80,8 @@ class Logger
      */
     public function debug($message, $logFilePath = 'storage/logs/debug.log')
     {
-        $this->logFilePath = '../../' . $logFilePath;
-        $this->log($message);
+        $this->logFilePath = $this->path . $logFilePath;
+        $this->log($message, 'debug');
     }
 
     /**
@@ -79,8 +93,8 @@ class Logger
      */
     public function error($message, $logFilePath = 'storage/logs/error.log')
     {
-        $this->logFilePath = '../../' . $logFilePath;
-        $this->log($message);
+        $this->logFilePath = $this->path . $logFilePath;
+        $this->log($message, 'error');
     }
 
     /**
@@ -92,8 +106,8 @@ class Logger
      */
     public function info($message, $logFilePath = 'storage/logs/info.log')
     {
-        $this->logFilePath = '../../' . $logFilePath;
-        $this->log($message);
+        $this->logFilePath = $this->path . $logFilePath;
+        $this->log($message, 'info');
     }
 
     /**
@@ -105,7 +119,7 @@ class Logger
      */
     public function warning($message, $logFilePath = 'storage/logs/warning.log')
     {
-        $this->logFilePath = '../../' . $logFilePath;
-        $this->log($message);
+        $this->logFilePath = $this->path . $logFilePath;
+        $this->log($message, 'warning');
     }
 }
