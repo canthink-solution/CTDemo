@@ -1793,7 +1793,7 @@ const submitApi = async (url, dataObj, formID = null, reloadFunction = null, clo
 			// Set headers dynamically based on whether the form has file inputs
 			const headers = {
 				'X-Requested-With': 'XMLHttpRequest',
-				'content-Type': hasFileInputs ? 'multipart/form-data' : 'application/x-www-form-urlencoded',
+				'Content-Type': hasFileInputs ? 'multipart/form-data' : 'application/x-www-form-urlencoded',
 			};
 
 			return axios({
