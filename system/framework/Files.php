@@ -32,9 +32,9 @@ class Files
     private $maxFileSize = 4;
 
     /**
-     * @var mixed Allowed MIME types. Can be an array of MIME types, a single MIME type, or '*'.
+     * @var string Allowed MIME types. Can be a string MIME type, or '*'.
      */
-    private $allowedMimeTypes = '*';
+    private $allowedMimeTypes = 'image/jpeg, image/png, application/pdf';
 
     /**
      * Sets the upload directory.
@@ -62,11 +62,16 @@ class Files
     /**
      * Sets the allowed MIME types.
      *
-     * @param mixed $allowedMimeTypes Allowed MIME types. Can be an array of MIME types, a single MIME type, or '*'.
+     * @param string $allowedMimeTypes Allowed MIME types. Can be a string MIME type or '*'.
      * @return void
+     * @throws \InvalidArgumentException If $allowedMimeTypes is not a string.
      */
-    public function setAllowedMimeTypes($allowedMimeTypes): void
+    public function setAllowedMimeTypes(string $allowedMimeTypes): void
     {
+        if (!is_string($allowedMimeTypes)) {
+            throw new \InvalidArgumentException("Allowed MIME types must be a string.");
+        }
+
         $this->allowedMimeTypes = $allowedMimeTypes;
     }
 
@@ -81,11 +86,16 @@ class Files
         $targetDir = $this->path . $this->uploadDir . '/';
         $this->createFolder();
 
+        $originalName = $file["name"];
+        $newFileName = $this->generateFileName($originalName);
+        $targetFile = $targetDir . $newFileName;
+
         $response = [
             'code' => 400,
             'message' => "",
             'files' => [
-                'name' => $file["name"],
+                'original_name' => htmlspecialchars($originalName),
+                'name' => htmlspecialchars($newFileName),
                 'size' => $file["size"] ?? NULL,
                 'path' => '',
                 'folder' => $targetDir,
@@ -112,17 +122,11 @@ class Files
         // Check file type
         $fileType = mime_content_type($file["tmp_name"]);
         if ($this->allowedMimeTypes !== '*') {
-            if (is_array($this->allowedMimeTypes)) {
-                $allowedTypes = implode(', ', $this->allowedMimeTypes);
+            $allowedTypes = $this->allowedMimeTypes;
+            // Check if the file type is not in the allowed MIME types
+            if (!in_array($fileType, explode(',', $allowedTypes))) {
                 $response['message'] = "Sorry, only files of type(s) {$allowedTypes} are allowed.";
-                if (!in_array($fileType, $this->allowedMimeTypes)) {
-                    return $response;
-                }
-            } elseif (is_string($this->allowedMimeTypes)) {
-                if ($fileType !== $this->allowedMimeTypes) {
-                    $response['message'] = "Sorry, only files of type '{$this->allowedMimeTypes}' are allowed.";
-                    return $response;
-                }
+                return $response;
             }
         }
 
@@ -137,6 +141,18 @@ class Files
         }
 
         return $response;
+    }
+
+    /**
+     * Generates a unique file name to ensure security.
+     *
+     * @param string $originalName The original name of the file.
+     * @return string The generated file name.
+     */
+    private function generateFileName(string $originalName): string
+    {
+        $extension = pathinfo($originalName, PATHINFO_EXTENSION);
+        return time() . bin2hex(random_bytes(5)) . '.' . $extension; // Concatenate timestamp and random string
     }
 
     /**
