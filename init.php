@@ -89,14 +89,20 @@ if (file_exists($autoloadPath)) {
 |--------------------------------------------------------------------------
 */
 
-require_once 'app/config/database.php';
-require_once 'app/config/mailer.php';
-require_once 'app/config/auditTrail.php';
-$helpers = ['debug_helper', 'common_helper', 'plugin_helper', 'framework_helper', 'session_helper', 'mailer_helper', 'audit_trails'];
+// Define directories to load files from
+$directories = [
+  "/app/config/*.php",
+  "/system/helpers/*.php"
+];
 
-foreach ($helpers as $helper) {
-  if (file_exists(__DIR__ . "/system/helpers/$helper.php")) {
-    require_once __DIR__ . "/system/helpers/$helper.php";
+// Iterate over each directory
+foreach ($directories as $directory) {
+  // Get files matching the pattern
+  $files = glob(__DIR__ . $directory);
+  
+  // Require each file
+  foreach ($files as $file) {
+      require_once $file;
   }
 }
 
@@ -188,9 +194,7 @@ if (hasData($_POST, 'fileName')) {
     echo file_get_contents($filePath, false, $context);
   } else {
     // If file doesn't exist, display error message
-    echo '<div class="alert alert-danger" role="alert">
-              File <b><i>' . $filePath . '</i></b> does not exist.
-             </div>';
+    echo '<div class="alert alert-danger" role="alert"> File <b><i>' . $filePath . '</i></b> does not exist. </div>';
   }
 }
 

@@ -3,6 +3,7 @@
 include_once '../../init.php';
 
 use Sys\framework\Files;
+use Sys\framework\Request;
 
 // Check if request comes from within the application
 if (!isAjax()) error_page('403');
@@ -300,3 +301,60 @@ function testUploadFunc($request = null)
     $uploadResult = $up->upload($_FILES['file']);
     json($uploadResult);
 }
+
+/**
+ * Test Request as a object param function
+ *
+ * @param array|null $request The request parameters.
+ * @return void
+ */
+function testRequestFunc(Request $request = null)
+{
+    dd(
+        [
+            'all' => $request->all(),
+            'method' => $request->method(),
+            'isMethod' => $request->isMethod('post'),
+            'url' => $request->url(),
+            'fullUrl' => $request->fullUrl(),
+            'simple_input' => $request->input('name'),
+            'array_input' => $request->input('users.0.name', 'No Array with this name are found'),
+            'get' => $request->get('name'),
+            'post' => $request->post('name'),
+            'file' => $request->file('filename'),
+            'has' => $request->has('file'),
+            'only' => $request->only(['name', 'email']), // use as string : 'name, email'
+            'except' => $request->except(['name', 'email']), // use as string : 'name, email'
+            'header' => $request->header('X-Requested-With', 'no header found');
+            'hasHeader' => $request->hasHeader('X-Requested-permission');
+            'bearerToken' => $request->bearerToken(),
+            'host' => $request->host(),
+            'path' => $request->path(),
+            'ajax' => $request->ajax()
+        ]
+
+        // [
+        //     'all' => Request::all(),
+        //     'method' => Request::method(),
+        //     'isMethod' => Request::isMethod('post'),
+        //     'url' => Request::url(),
+        //     'fullUrl' => Request::fullUrl(),
+        //     'simple_input' => Request::input('name'),
+        //     'array_input' => Request::input('user.0.name', 'No Array with this name are found'),
+        //     'get' => Request::get('name'),
+        //     'post' => Request::post('name'),
+        //     'file' => Request::file('filename'),
+        //     'has' => Request::has('file'),
+        //     'only' => Request::only(['name', 'email']), // use as string : 'name, email'
+        //     'except' => Request::except(['name', 'email']), // use as string : 'name, email'
+        //     'header' => Request::header('X-Requested-With', 'no header found');
+        //     'hasHeader' => Request::hasHeader('X-Requested-permission');
+        //     'bearerToken' => Request::bearerToken(),
+        //     'host' => Request::host(),
+        //     'path' => Request::path(),
+        //     'ajax' => Request::ajax()
+        // ]
+    );
+}
+
+
