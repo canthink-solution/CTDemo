@@ -25,6 +25,7 @@ class Request
     public function __construct()
     {
         self::$data = array_merge($_GET, $_POST, $_FILES);
+        // self::$data = (object) array_merge($_GET, $_POST, $_FILES);
     }
 
     /**

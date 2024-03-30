@@ -38,7 +38,7 @@ function getData($request = null)
  */
 function getDataLimit($request = null)
 {
-    $limit = $request['limit']; // Not safe from XSS injection
+    $limit = request('limit'); // Not safe from XSS injection
     json(db()->table('users')->select('id,name')->limit($limit)->get());
 }
 
@@ -308,7 +308,7 @@ function testUploadFunc($request = null)
  * @param array|null $request The request parameters.
  * @return void
  */
-function testRequestFunc(Request $request = null)
+function testRequestFunc($request = null)
 {
     dd(
         [
@@ -325,8 +325,8 @@ function testRequestFunc(Request $request = null)
             'has' => $request->has('file'),
             'only' => $request->only(['name', 'email']), // use as string : 'name, email'
             'except' => $request->except(['name', 'email']), // use as string : 'name, email'
-            'header' => $request->header('X-Requested-With', 'no header found');
-            'hasHeader' => $request->hasHeader('X-Requested-permission');
+            'header' => $request->header('X-Requested-With', 'no header found'),
+            'hasHeader' => $request->hasHeader('X-Requested-permission'),
             'bearerToken' => $request->bearerToken(),
             'host' => $request->host(),
             'path' => $request->path(),

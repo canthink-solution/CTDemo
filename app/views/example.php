@@ -97,9 +97,27 @@ include 'template/header.php';
                                 <div id="testRunTask"></div>
                                 <div id="testUploadFiles">
                                     <form id="submitFile" action="ExampleController" method="post" enctype="multipart/form-data">
+                                        <div class="row">
+                                            <div class="col-md-6">
+                                                <label for="file">Name</label><br>
+                                                <input type="text" id="name" name="name" class="form-control">
+                                            </div>
+                                            <div class="col-md-6">
+                                                <label for="file">Email</label><br>
+                                                <input type="email" id="email" name="email" class="form-control">
+                                            </div>
+                                            <div class="col-md-6">
+                                                <label for="file">Age</label><br>
+                                                <input type="number" id="age" name="age" min="1" step="1" class="form-control">
+                                            </div>
+                                            <div class="col-md-6">
+                                                <label for="file">Tel. No</label><br>
+                                                <input type="text" id="phone_no" name="phone_no" class="form-control">
+                                            </div>
+                                        </div>
                                         <label for="file">Select file(s) to upload:</label><br>
                                         <input type="file" id="file" name="file"><br><br>
-                                        <input type="hidden" id="action" name="action" value="testUploadFunc" class="form-control" readonly>
+                                        <input type="hidden" id="action" name="action" value="testRequestFunc" class="form-control" readonly>
                                         <input type="submit" id="submitBtn" value="Upload">
                                     </form>
                                 </div>
