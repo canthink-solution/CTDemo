@@ -25,7 +25,6 @@ class Request
     public function __construct()
     {
         self::$data = array_merge($_GET, $_POST, $_FILES);
-        // self::$data = (object) array_merge($_GET, $_POST, $_FILES);
     }
 
     /**
@@ -134,7 +133,7 @@ class Request
     public static function only($keys)
     {
         if (!is_array($keys) && !is_string($keys)) {
-            throw new InvalidArgumentException('Parameter $keys must be an array or a string.');
+            throw new \InvalidArgumentException('Parameter $keys must be an array or a string.');
         }
 
         // Convert string keys to array
@@ -153,7 +152,7 @@ class Request
     public static function except($keys)
     {
         if (!is_array($keys) && !is_string($keys)) {
-            throw new InvalidArgumentException('Parameter $keys must be an array or a string.');
+            throw new \InvalidArgumentException('Parameter $keys must be an array or a string.');
         }
 
         // Convert string keys to array
@@ -235,7 +234,7 @@ class Request
     public static function bearerToken()
     {
         $authorizationHeader = self::header('Authorization');
-        if (strpos($authorizationHeader, 'Bearer ') === 0) {
+        if (!empty($authorizationHeader) && strpos($authorizationHeader, 'Bearer ') === 0) {
             return substr($authorizationHeader, 7);
         }
         return null;

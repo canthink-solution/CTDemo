@@ -1,9 +1,6 @@
 <?php
 
 // Check if session is not already started
-
-use Sys\framework\Request;
-
 if (session_status() === PHP_SESSION_NONE) {
 	session_start(); // Start the session
 }
@@ -151,11 +148,10 @@ if (isset($config['db']) || is_array($config['db'])) {
 
 if (isAjax()) {
   $action = request('action');
-  $request = new Request;
   if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action != 'modal') {
       if (hasData($action) && function_exists($action))
-        call_user_func($action, (object) $request);
+        call_user_func($action, new Sys\framework\Request);
       else if (!hasData($action))
         dd("action does not define in callApi.");
       else if (!function_exists($action))

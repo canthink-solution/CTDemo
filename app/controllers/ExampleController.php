@@ -14,7 +14,7 @@ if (!isAjax()) error_page('403');
  * @param mixed $request Optional request data
  * @return void
  */
-function getSql($request = null)
+function getSql(Request $request)
 {
     json(db()->table('users')->toSql());
 }
@@ -25,7 +25,7 @@ function getSql($request = null)
  * @param mixed $request Optional request data
  * @return void
  */
-function getData($request = null)
+function getData(Request $request)
 {
     json(db()->table('users')->select('id,name')->get());
 }
@@ -36,9 +36,9 @@ function getData($request = null)
  * @param mixed $request Optional request data containing the 'limit' parameter
  * @return void
  */
-function getDataLimit($request = null)
+function getDataLimit(Request $request)
 {
-    $limit = request('limit'); // Not safe from XSS injection
+    $limit = $request->post('limit', 1); // Not safe from XSS injection
     json(db()->table('users')->select('id,name')->limit($limit)->get());
 }
 
@@ -48,7 +48,7 @@ function getDataLimit($request = null)
  * @param mixed $request Optional request data
  * @return void
  */
-function getDataConditions($request = null)
+function getDataConditions(Request $request)
 {
     json(db()->table('users')->select('id,name')->where('user_status', 3)->get());
     // json(db()->table('users')->select('id,name')->where('user_status', 3)->orWhere('user_status', 4)->get());
@@ -63,7 +63,7 @@ function getDataConditions($request = null)
  * @param mixed $request Optional request data
  * @return void
  */
-function fetchDataConditions($request = null)
+function fetchDataConditions(Request $request)
 {
     json(db()->table('users')->select('id,name')->where('user_status', 3)->fetch());
 }
@@ -74,7 +74,7 @@ function fetchDataConditions($request = null)
  * @param mixed $request Optional request data
  * @return void
  */
-function getDataPagination($request = null)
+function getDataPagination(Request $request)
 {
     // Get the current page number from the request data
     $page = request('page'); // Use method request() instead of $request for security from XSS Payload
@@ -92,7 +92,7 @@ function getDataPagination($request = null)
  * @param mixed $request Optional request data
  * @return void
  */
-function getDataCountTotal($request = null)
+function getDataCountTotal(Request $reques)
 {
     // Retrieve the total count of records from the 'users' table
     json(db()->table('users')->count());
@@ -104,7 +104,7 @@ function getDataCountTotal($request = null)
  * @param mixed $request Optional request data containing the 'id' parameter
  * @return void
  */
-function getDataModal($request = null)
+function getDataModal(Request $request)
 {
     // Retrieve data for a modal from the 'users' table based on the provided ID
     json(db()->table('users')->where('id', request('id'))->fetch());
@@ -116,7 +116,7 @@ function getDataModal($request = null)
  * @param array|null $request The request parameters.
  * @return void
  */
-function getDataJoinConditions($request = null)
+function getDataJoinConditions(Request $request)
 {
     $db = db('slave');
 
@@ -136,7 +136,7 @@ function getDataJoinConditions($request = null)
  * @param array|null $request The request parameters.
  * @return void
  */
-function getDataSlaveDBConditions($request = null)
+function getDataSlaveDBConditions(Request $request)
 {
     $db = db('slave');
 
@@ -161,7 +161,7 @@ function getDataSlaveDBConditions($request = null)
  * @param array|null $request The request parameters.
  * @return void
  */
-function getValidationData($request = null)
+function getValidationData(Request $request)
 {
     // single array
     // $data = [
@@ -217,7 +217,7 @@ function getValidationData($request = null)
  * @param array|null $request The request parameters.
  * @return void
  */
-function testLoggerClass($request = null)
+function testLoggerClass(Request $request)
 {
     log_message('debug', 'This is the debug message');
     log_message('warning', 'This is the warning message');
@@ -231,7 +231,7 @@ function testLoggerClass($request = null)
  * @param array|null $request The request parameters.
  * @return void
  */
-function testInsertFunc($request = null)
+function testInsertFunc(Request $request)
 {
     $result = db()->insert('entity_address', ['entity_type' => 'Test entity_type', 'entity_id' => 2, 'ids' => 23]);
     json($result);
@@ -243,7 +243,7 @@ function testInsertFunc($request = null)
  * @param array|null $request The request parameters.
  * @return void
  */
-function testUpdateFunc($request = null)
+function testUpdateFunc(Request $request)
 {
     $result = db()->update(
         'entity_address',
@@ -259,7 +259,7 @@ function testUpdateFunc($request = null)
  * @param array|null $request The request parameters.
  * @return void
  */
-function testDeleteFunc($request = null)
+function testDeleteFunc(Request $request)
 {
     $result = db()->delete('entity_address', ['id' => 5]);
     json($result);
@@ -271,7 +271,7 @@ function testDeleteFunc($request = null)
  * @param array|null $request The request parameters.
  * @return void
  */
-function testRunnerFunc($request = null)
+function testRunnerFunc(Request $request)
 {
     $task = TaskRunParallel(); // create new object 
     $task->setMaxConcurrentTasks(3);
@@ -291,7 +291,7 @@ function testRunnerFunc($request = null)
  * @param array|null $request The request parameters.
  * @return void
  */
-function testUploadFunc($request = null)
+function testUploadFunc(Request $request)
 {
     $up = new Files();
 
@@ -308,7 +308,7 @@ function testUploadFunc($request = null)
  * @param array|null $request The request parameters.
  * @return void
  */
-function testRequestFunc($request = null)
+function testRequestFunc(Request $request)
 {
     dd(
         [
@@ -321,7 +321,7 @@ function testRequestFunc($request = null)
             'array_input' => $request->input('users.0.name', 'No Array with this name are found'),
             'get' => $request->get('name'),
             'post' => $request->post('name'),
-            'file' => $request->file('filename'),
+            'file' => $request->file('file'),
             'has' => $request->has('file'),
             'only' => $request->only(['name', 'email']), // use as string : 'name, email'
             'except' => $request->except(['name', 'email']), // use as string : 'name, email'

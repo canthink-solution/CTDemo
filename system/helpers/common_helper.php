@@ -7,13 +7,8 @@ function request($param = NULL, $xssSecurity = true)
 	$data = NULL;
 
 	if (hasData($param)) {
-		if (hasData($_GET, $param)) {
-			$data = $_GET[$param];
-		} else if (hasData($_POST, $param)) {
-			$data = $_POST[$param];
-		} else if (hasData($_REQUEST, $param)) {
-			$data = $_REQUEST[$param];
-		}
+		$request = new Sys\framework\Request;
+		$data = $request->input($param);
 	}
 
 	return $xssSecurity ? purify($data) : $data;

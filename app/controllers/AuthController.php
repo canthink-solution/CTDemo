@@ -2,6 +2,8 @@
 
 include_once '../../init.php';
 
+use Sys\framework\Request;
+
 // Check if request comes from within the application
 if (!isAjax()) error_page('403');
 
@@ -9,7 +11,7 @@ use Sys\constants\GeneralErrorMessage;
 use Sys\constants\LoginType;
 use Sys\constants\GeneralStatus;
 
-function authorize($request = NULL)
+function authorize(Request $request)
 {
     $username = request('username');
     $enteredPassword = request('password');
@@ -33,7 +35,7 @@ function authorize($request = NULL)
     json($response);
 }
 
-function socialite($request = NULL)
+function socialite(Request $request)
 {
     $userData = db()->table('users')
         ->select('`users`.`id`, `users`.`name`, `users`.`email`, `users`.`user_preferred_name`, `users`.`user_status`')

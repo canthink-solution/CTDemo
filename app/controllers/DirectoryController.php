@@ -2,10 +2,12 @@
 
 include_once '../../init.php';
 
+use Sys\framework\Request;
+
 // Check if request comes from within the application
 if (!isAjax()) error_page('403');
 
-function getUserByID($request = null)
+function getUserByID(Request $request)
 {
     $data = db()->table('users')
         ->select('`users`.`id`, `users`.`name`, `users`.`email`, `users`.`user_preferred_name`, `users`.`user_dob`, `users`.`username`, `users`.`password`, `users`.`user_status`')
@@ -29,7 +31,7 @@ function getUserByID($request = null)
     json($data);
 }
 
-function createUser($request = null)
+function createUser(Request $request)
 {
     $data = [
         'name' => request('name'),
@@ -48,7 +50,7 @@ function createUser($request = null)
     json($result);
 }
 
-function updateUser($request = null)
+function updateUser(Request $request)
 {
     $data = [
         'id' => request('id'),
