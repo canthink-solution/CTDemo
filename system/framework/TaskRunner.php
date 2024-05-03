@@ -2,6 +2,8 @@
 
 namespace Sys\framework;
 
+use Sys\framework\Logger;
+
 /**
  * TaskRunner Class
  *
@@ -38,14 +40,9 @@ class TaskRunner
     private $jobsDir = '../../app/jobs/';
 
     /**
-     * @var string The directory path where log files will be stored. 
-     */
-    private $logDir = 'storage/';
-
-    /**
      * @var string|null The file path where task outputs will be logged, or null if logging is disabled.
      */
-    private $logPath;
+    private $logPath = '../../storage' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'TaskRunnerLog' . DIRECTORY_SEPARATOR;
 
     /**
      * @var string PHP CLI command for current environment
@@ -55,7 +52,7 @@ class TaskRunner
     /**
      * @var int Default process timeout for tasks in seconds.
      */
-    private $processTimeout = 300; // 5 minutes
+    private $processTimeout = 5400; // 1.5 Hour
 
     /**
      * TaskRunner constructor.
@@ -94,24 +91,9 @@ class TaskRunner
      *
      * @param int $timeout Timeout value in seconds
      */
-    public function setProcessTimeout($timeout = 300)
+    public function setProcessTimeout($timeout = 5400)
     {
         $this->processTimeout = $timeout;
-    }
-
-    /**
-     * Set the log path for the TaskRunner.
-     *
-     * @param string $logPath Path to the log file
-     * @param int $permissions Permissions for the log file
-     */
-    public function setLogPath($logPath, $permissions = 0644)
-    {
-        $this->logPath = '../../' . $this->logDir . $logPath;
-
-        if (!file_exists($this->logPath)) {
-            $this->createLogFile($this->logPath, $permissions);
-        }
     }
 
     /**
@@ -136,7 +118,7 @@ class TaskRunner
 
             // Wait until all processes are done
             while ($this->hasRunningProcesses()) {
-                $this->waitForRunningTasks($runningProcesses, true); // Set a flag to indicate waiting for deadlock resolution
+                $this->waitForRunningTasks($this->runningTasks, true); // Set a flag to indicate waiting for deadlock resolution
             }
 
             $endTime = microtime(true); // Record end time
@@ -144,7 +126,7 @@ class TaskRunner
             $elapsedTime = number_format($endTime - $startTime, 2, '.', ''); // Calculate elapsed time
             $this->print("Total process time: {$elapsedTime} seconds.");
         } catch (\Exception $e) {
-            $this->logError($e->getMessage());
+            $this->logRecord($e->getMessage());
             $this->print("An error occurred: " . $e->getMessage());
         }
     }
@@ -156,19 +138,18 @@ class TaskRunner
      */
     private function executeChunkOfTasks($chunk)
     {
-        $runningProcesses = [];
         foreach ($chunk as $task) {
             // Ensure maximum concurrent tasks limit is not exceeded
-            while (count($runningProcesses) >= $this->maxConcurrentTasks) {
-                $this->waitForRunningTasks($runningProcesses);
+            while (count($this->runningTasks) >= $this->maxConcurrentTasks) {
+                $this->waitForRunningTasks($this->runningTasks);
             }
 
             // Execute task and store the running process
-            $runningProcesses[] = $this->executeTask($task);
+            $this->executeTask($task);
         }
 
         // Wait for remaining tasks in the chunk to complete
-        $this->waitForRunningTasks($runningProcesses, true); // Set a flag to indicate waiting for deadlock resolution
+        $this->waitForRunningTasks($this->runningTasks, true); // Set a flag to indicate waiting for deadlock resolution
     }
 
     /**
@@ -183,19 +164,17 @@ class TaskRunner
 
         // Loop until either all tasks are completed or deadlock resolution time is exceeded
         while (!empty($runningProcesses)) {
-            foreach ($runningProcesses as $key => $processDetails) {
+            foreach ($runningProcesses as $pid => $processDetails) {
                 $process = $processDetails['process'];
-                $pid = $this->getPid($process);
 
                 // Check if process is still running
                 $isRunning = $this->isProcessRunning($process);
-                // $this->print("TaskRunner - Process #{$pid} still running? " . ($isRunning ? "Yes" : "No"));
 
                 // Check if process is still running
                 if (!$isRunning) {
                     // Print task completion information
                     $this->printTaskCompletion($processDetails);
-                    unset($runningProcesses[$key]); // Remove completed process
+                    unset($runningProcesses[$pid]); // Remove completed process
                 } else {
                     // Check if the process has exceeded the timeout
                     $elapsedTime = microtime(true) - $processDetails['start_time'];
@@ -206,7 +185,7 @@ class TaskRunner
                             // Handle deadlock resolution here, e.g., by forcefully terminating the process
                             $this->print("TaskRunner - Timeout reached for PID: {$pid}, Task : {$command}. Handling deadlock...");
                             proc_terminate($process);
-                            unset($runningProcesses[$key]); // Remove deadlock process
+                            unset($runningProcesses[$pid]); // Remove deadlock process
                         } else {
                             continue; // If deadlock resolution is not enabled, simply wait
                         }
@@ -235,8 +214,8 @@ class TaskRunner
         $params = !empty($task['params']) ? implode(' ', $task['params']) : NULL;
         $descriptors = [
             ['pipe', 'r'],
-            ['file', $this->logPath, 'a'],
-            ['file', $this->logPath, 'a'],
+            ['file', $this->logPath . 'debug' . DIRECTORY_SEPARATOR . 'STDOUT.log', 'a'],
+            ['file', $this->logPath . 'debug' . DIRECTORY_SEPARATOR . 'STDERR.log', 'a'],
         ];
 
         $command = "{$this->phpCommand} $filePath $params";
@@ -256,7 +235,7 @@ class TaskRunner
                 return null;
             }
         } catch (\Exception $e) {
-            $this->logError($e->getMessage());
+            $this->logRecord($e->getMessage());
             $this->print("An error occurred while executing the task: " . $e->getMessage());
             return null;
         }
@@ -366,42 +345,20 @@ class TaskRunner
      */
     private function formatTextLine($textLine)
     {
+        $this->logRecord($textLine, 'info');
         $formattedMessage = "[" . date("Y-m-d h:i A") . "] - $textLine\n";
-        $workerLog = '../../' . $this->logDir . '/logs/TaskRunnerLog/' . date('Ymd') . '.log';
-        $this->createLogFile($workerLog, 0644);
-        file_put_contents($workerLog, $formattedMessage, FILE_APPEND);
         return $formattedMessage . PHP_EOL;
     }
 
     /**
-     * Create a log file if it doesn't exist.
+     * Log all the process.
      *
-     * @param string $logPath Path to the log file
-     * @param int $permissions Permissions for the log file
+     * @param string $logRecord Record message to log file
      */
-    private function createLogFile($logPath, $permissions)
+    private function logRecord($message, $type = 'error')
     {
-        $directory = dirname($logPath);
-        if (!is_dir($directory)) {
-            mkdir($directory, 0755, true);
-        }
-        touch($logPath);
-        chmod($logPath, $permissions);
-    }
-
-    /**
-     * Log an error.
-     *
-     * @param string $errorMessage Error message to log
-     */
-    private function logError($errorMessage)
-    {
-        if ($this->logPath !== null) {
-            $errorLog = fopen($this->logPath, 'a');
-            if ($errorLog !== false) {
-                fwrite($errorLog, "[" . date("Y-m-d h:i A") . "] - ERROR: $errorMessage" . PHP_EOL);
-                fclose($errorLog);
-            }
-        }
+        $logFile = $type == 'error' ? 'error_' : 'process_';
+        $logger = new Logger();
+        $logger->$type($message, 'storage' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'TaskRunnerLog' . DIRECTORY_SEPARATOR . $logFile . date('Ymd') . '.log');
     }
 }

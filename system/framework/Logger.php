@@ -68,6 +68,8 @@ class Logger
         }
         $formattedMessage .= ' - ' . $message . PHP_EOL;
 
+        $this->createLogFileIfNotExists();
+
         file_put_contents($this->logFilePath, $formattedMessage, FILE_APPEND);
     }
 
