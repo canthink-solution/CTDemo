@@ -101,12 +101,22 @@ class TaskRunner
      */
     public function run()
     {
-        $startTime = microtime(true); // Record start time
-        $this->print("Starting TaskRunner.....");
+        $originalTimeLimit = ini_get('max_execution_time') ?? 300;
         try {
+
+            // Check if there are tasks to run
+            if (empty($this->tasks)) {
+                $this->print("No tasks to run.");
+                return;
+            }
+
+            set_time_limit($this->processTimeout);
 
             // Divide tasks into smaller chunks
             $chunks = array_chunk($this->tasks, $this->maxConcurrentTasks);
+
+            $this->print("Starting TaskRunner.....");
+            $startTime = microtime(true); // Record start time
 
             // Process each chunk of tasks
             foreach ($chunks as $chunk) {
@@ -129,6 +139,7 @@ class TaskRunner
             $this->logRecord($e->getMessage());
             $this->print("An error occurred: " . $e->getMessage());
         }
+        set_time_limit($originalTimeLimit);
     }
 
     /**
@@ -212,10 +223,16 @@ class TaskRunner
     {
         $filePath = $this->jobsDir . $task['command'];
         $params = !empty($task['params']) ? implode(' ', $task['params']) : NULL;
+        $logFolderPath = $this->logPath . 'debug_log' . DIRECTORY_SEPARATOR;
+
+        if (!is_dir($logFolderPath)) {
+            mkdir($logFolderPath, 0755, true);
+        }
+
         $descriptors = [
             ['pipe', 'r'],
-            ['file', $this->logPath . 'debug' . DIRECTORY_SEPARATOR . 'STDOUT.log', 'a'],
-            ['file', $this->logPath . 'debug' . DIRECTORY_SEPARATOR . 'STDERR.log', 'a'],
+            ['file', $logFolderPath . 'STDOUT.log', 'a'],
+            ['file', $logFolderPath . 'STDERR.log', 'a'],
         ];
 
         $command = "{$this->phpCommand} $filePath $params";
