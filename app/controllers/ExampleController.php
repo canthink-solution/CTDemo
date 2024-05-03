@@ -275,7 +275,6 @@ function testRunnerFunc(Request $request)
 {
     $task = TaskRunParallel(); // create new object 
     $task->setMaxConcurrentTasks(3);
-    $task->setLogPath('logs/TestCase.log');
     // Add 2 tasks
     // for ($i = 1; $i < 2; $i++) {
     //     $task->addTask("TestCase{$i}.php", ["param1", "param2", "param3"]);
