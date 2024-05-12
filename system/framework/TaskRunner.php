@@ -52,7 +52,12 @@ class TaskRunner
     /**
      * @var int Default process timeout for tasks in seconds.
      */
-    private $processTimeout = 5400; // 1.5 Hour
+    private $processTimeout = 36000; // 10 Hour
+
+    /**
+     * @var int Default process sleep per tasks chunk in seconds.
+     */
+    private $sleep = 10;
 
     /**
      * TaskRunner constructor.
@@ -91,7 +96,7 @@ class TaskRunner
      *
      * @param int $timeout Timeout value in seconds
      */
-    public function setProcessTimeout($timeout = 5400)
+    public function setProcessTimeout($timeout = 36000)
     {
         $this->processTimeout = $timeout;
     }
@@ -121,14 +126,12 @@ class TaskRunner
             // Process each chunk of tasks
             foreach ($chunks as $chunk) {
                 $this->executeChunkOfTasks($chunk);
-
-                // Sleep for a short interval before processing the next chunk
-                usleep(10000);
+                sleep($this->sleep); // Sleep for a short interval before processing the next chunk
             }
 
             // Wait until all processes are done
             while ($this->hasRunningProcesses()) {
-                $this->waitForRunningTasks($this->runningTasks, true); // Set a flag to indicate waiting for deadlock resolution
+                $this->waitForRunningTasks(true); // Set a flag to indicate waiting for deadlock resolution
             }
 
             $endTime = microtime(true); // Record end time
@@ -152,7 +155,7 @@ class TaskRunner
         foreach ($chunk as $task) {
             // Ensure maximum concurrent tasks limit is not exceeded
             while (count($this->runningTasks) >= $this->maxConcurrentTasks) {
-                $this->waitForRunningTasks($this->runningTasks);
+                $this->waitForRunningTasks();
             }
 
             // Execute task and store the running process
@@ -160,22 +163,21 @@ class TaskRunner
         }
 
         // Wait for remaining tasks in the chunk to complete
-        $this->waitForRunningTasks($this->runningTasks, true); // Set a flag to indicate waiting for deadlock resolution
+        $this->waitForRunningTasks(true); // Set a flag to indicate waiting for deadlock resolution
     }
 
     /**
      * Wait for running tasks to complete.
      *
-     * @param array $runningProcesses Array of running processes
      * @param bool $resolveDeadlock Flag to indicate waiting for deadlock resolution
      */
-    private function waitForRunningTasks(&$runningProcesses, $resolveDeadlock = false)
+    private function waitForRunningTasks($resolveDeadlock = false)
     {
         $startWaitingTime = microtime(true);
 
         // Loop until either all tasks are completed or deadlock resolution time is exceeded
-        while (!empty($runningProcesses)) {
-            foreach ($runningProcesses as $pid => $processDetails) {
+        while (!empty($this->runningTasks)) {
+            foreach ($this->runningTasks as $pid => $processDetails) {
                 $process = $processDetails['process'];
 
                 // Check if process is still running
@@ -185,7 +187,7 @@ class TaskRunner
                 if (!$isRunning) {
                     // Print task completion information
                     $this->printTaskCompletion($processDetails);
-                    unset($runningProcesses[$pid]); // Remove completed process
+                    unset($this->runningTasks[$pid]); // Remove completed process
                 } else {
                     // Check if the process has exceeded the timeout
                     $elapsedTime = microtime(true) - $processDetails['start_time'];
@@ -196,7 +198,7 @@ class TaskRunner
                             // Handle deadlock resolution here, e.g., by forcefully terminating the process
                             $this->print("TaskRunner - Timeout reached for PID: {$pid}, Task : {$command}. Handling deadlock...");
                             proc_terminate($process);
-                            unset($runningProcesses[$pid]); // Remove deadlock process
+                            unset($this->runningTasks[$pid]); // Remove deadlock process
                         } else {
                             continue; // If deadlock resolution is not enabled, simply wait
                         }
