@@ -43,6 +43,11 @@ class Database
     public $connectionName = 'default';
 
     /**
+     * @var string|null The database schema name.
+     */
+    protected $schema;
+
+    /**
      * @var string|null The table name.
      */
     protected $table;
@@ -245,6 +250,8 @@ class Database
 
             $pdo = new \PDO($dsn, $pro['username'], $pro['password'], $options);
             $this->pdo[$connectionName] = $pdo;
+            $this->schema = $pro['db'];
+
         } catch (\PDOException $e) {
             $this->_error = ['code' => (int) $e->getCode(), 'message' => 'Error connection: ' . $e->getMessage()];
             log_message('error', 'db->connect() : ' . $e->getMessage());
@@ -665,7 +672,6 @@ class Database
                 ];
 
                 trail($affectedRows, 'delete', $table, NULL, $previous_values);
-                
             } else {
                 $response = [
                     'code' => 400,
@@ -1754,30 +1760,29 @@ class Database
     protected function sanitizeColumn($table, $data)
     {
         // Get columns from table schema based on database driver
-        $driver = $this->connectionsSettings[$this->connectionName]['driver'];
         switch ($this->driver) {
             case 'mysql':
-                $sql = "DESCRIBE $table";
+                $sql = "DESCRIBE {$this->schema}.$table";
                 $stmt = $this->pdo[$this->connectionName]->prepare($sql);
                 $stmt->execute();
                 $columns_table = $stmt->fetchAll(\PDO::FETCH_COLUMN);
                 break;
             case 'mssql':
-                $sql = "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = ?";
+                $sql = "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = ? AND TABLE_SCHEMA = ?";
                 $stmt = $this->pdo[$this->connectionName]->prepare($sql);
-                $stmt->execute([$table]);
+                $stmt->execute([$table, $this->schema]);
                 $columns_table = $stmt->fetchAll(\PDO::FETCH_COLUMN);
                 break;
             case 'oracle':
-                $sql = "SELECT COLUMN_NAME FROM ALL_TAB_COLUMNS WHERE TABLE_NAME = ?";
+                $sql = "SELECT COLUMN_NAME FROM ALL_TAB_COLUMNS WHERE TABLE_NAME = ? AND OWNER = ?";
                 $stmt = $this->pdo[$this->connectionName]->prepare($sql);
-                $stmt->execute([$table]);
+                $stmt->execute([$table, $this->schema]);
                 $columns_table = $stmt->fetchAll(\PDO::FETCH_COLUMN);
                 break;
             case 'firebird':
-                $sql = "SELECT RDB\$FIELD_NAME FROM RDB\$RELATION_FIELDS WHERE RDB\$RELATION_NAME = ?";
+                $sql = "SELECT RDB\$FIELD_NAME FROM RDB\$RELATION_FIELDS WHERE RDB\$RELATION_NAME = ? AND RDB\$OWNER_NAME = ?";
                 $stmt = $this->pdo[$this->connectionName]->prepare($sql);
-                $stmt->execute([$table]);
+                $stmt->execute([$table, $this->schema]);
                 $columns_table = $stmt->fetchAll(\PDO::FETCH_COLUMN);
                 break;
             default:
@@ -1855,7 +1860,8 @@ class Database
                 $sql = "SELECT COLUMN_NAME
                 FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
                 WHERE TABLE_NAME = :table
-                AND CONSTRAINT_NAME = 'PRIMARY'";
+                AND CONSTRAINT_NAME = 'PRIMARY'
+                AND TABLE_SCHEMA = :schema";
                 break;
 
             case 'mssql':
@@ -1863,7 +1869,8 @@ class Database
                 $sql = "SELECT COLUMN_NAME 
                 FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE 
                 WHERE OBJECTPROPERTY(OBJECT_ID(CONSTRAINT_SCHEMA + '.' + CONSTRAINT_NAME), 'IsPrimaryKey') = 1 
-                AND TABLE_NAME = :table";
+                AND TABLE_NAME = :table
+                AND TABLE_SCHEMA = :schema";
                 break;
 
             case 'oracle':
@@ -1873,7 +1880,8 @@ class Database
                 WHERE cons.constraint_type = 'P'
                 AND cons.constraint_name = cols.constraint_name
                 AND cons.owner = cols.owner
-                AND cols.table_name = :table";
+                AND cols.table_name = :table
+                AND cols.owner = :schema";
                 break;
 
             case 'firebird':
@@ -1882,7 +1890,8 @@ class Database
                 FROM rdb\$indices
                 LEFT JOIN rdb\$index_segments ON rdb\$indices.rdb\$index_name = rdb\$index_segments.rdb\$index_name
                 WHERE rdb\$indices.rdb\$relation_name = :table
-                AND rdb\$indices.rdb\$unique_flag IS NOT NULL";
+                AND rdb\$indices.rdb\$unique_flag IS NOT NULL
+                AND rdb\$indices.rdb\$relation_name = :schema";
                 break;
 
             default:
@@ -1891,11 +1900,63 @@ class Database
 
         // Prepare and execute the SQL statement
         $stmt = $this->pdo[$this->connectionName]->prepare($sql);
-        $stmt->execute([':table' => $table]);
+        $stmt->execute([':table' => $table, ':schema' => $this->schema]);
 
         // Fetch the primary key column name
         $primaryKeyColumn = $stmt->fetchColumn();
 
         return $primaryKeyColumn ?: null;
+    }
+
+    /**
+     * Get all columns information for a given table.
+     *
+     * @param string $table The name of the table.
+     * @return array|null An array containing information about all columns of the table, or null if the table doesn't exist.
+     */
+    public function getTableColumn($table)
+    {
+        switch ($this->driver) {
+            case 'mysql':
+                // Query the information schema to get column information
+                $sql = "SELECT COLUMN_NAME, IS_NULLABLE, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_NAME = :table AND TABLE_SCHEMA = :schema";
+                break;
+
+            case 'mssql':
+                // Query to get column information for MSSQL
+                $sql = "SELECT COLUMN_NAME, IS_NULLABLE, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_NAME = :table AND TABLE_SCHEMA = :schema";
+                break;
+
+            case 'oracle':
+                // Query to get column information for Oracle
+                $sql = "SELECT column_name, nullable, data_type, data_length
+                FROM all_tab_columns
+                WHERE table_name = :table AND owner = :schema";
+                break;
+
+            case 'firebird':
+                // Query to get column information for Firebird
+                $sql = "SELECT rdb\$fields.rdb\$field_name AS column_name, rdb\$fields.rdb\$null_flag AS is_nullable,
+                rdb\$fields.rdb\$field_type_name AS data_type
+                FROM rdb\$relation_fields
+                WHERE rdb\$relation_fields.rdb\$relation_name = :table AND rdb\$relation_fields.rdb\$relation_schema = :schema";
+                break;
+
+            default:
+                throw new \PDOException('Unsupported database driver', 404);
+        }
+
+        // Prepare and execute the SQL statement
+        $stmt = $this->pdo[$this->connectionName]->prepare($sql);
+        $stmt->execute([':table' => $table, ':schema' => $this->schema]);
+
+        // Fetch all column information
+        $columns = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+
+        return $columns ?: null;
     }
 }
