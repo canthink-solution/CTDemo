@@ -10,7 +10,7 @@ namespace Sys\framework;
  * @author    Mohd Fahmy Izwan Zulkhafri <faizzul14@gmail.com>
  * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @link      -
- * @version   1.0.0
+ * @version   0.1.1
  */
 
 class Database
@@ -73,64 +73,19 @@ class Database
     protected $groupBy;
 
     /**
-     * @var array The conditions for WHERE clause.
+     * @var string|null The conditions for WHERE clause.
      */
-    protected $where = [];
+    protected $where = null;
 
     /**
-     * @var array The conditions for WHERE IN clause.
+     * @var string|null The join clauses.
      */
-    protected $whereIn = [];
-
-    /**
-     * @var array The conditions for WHERE NOT IN clause.
-     */
-    protected $whereNotIn = [];
-
-    /**
-     * @var array The conditions for WHERE BETWEEN clause.
-     */
-    protected $whereBetween = [];
-
-    /**
-     * @var array The conditions for OR WHERE clause.
-     */
-    protected $orWhere = [];
-
-    /**
-     * @var array The conditions for OR WHERE IN clause.
-     */
-    protected $orWhereIn = [];
-
-    /**
-     * @var array The conditions for OR WHERE NOT IN clause.
-     */
-    protected $orWhereNotIn = [];
-
-    /**
-     * @var array The conditions for OR WHERE BETWEEN clause.
-     */
-    protected $orWhereBetween = [];
-
-    /**
-     * @var array The conditions for HAVING clause.
-     */
-    protected $having = [];
-
-    /**
-     * @var array The join clauses.
-     */
-    protected $joins = [];
+    protected $joins = null;
 
     /**
      * @var array The relations use for eager loading (N+1).
      */
     protected $relations = [];
-
-    /**
-     * @var string The previously executed SQL query
-     */
-    protected $_lastQuery;
 
     /**
      * @var array The previously executed error query
@@ -140,12 +95,22 @@ class Database
     /**
      * @var bool The flag for sanitization.
      */
-    protected $secure = true;
+    protected $_secure = true;
 
     /**
-     * @var bool The flag for eager loader.
+     * @var array An array to store the bound parameters.
      */
-    protected $isEagerMode = false;
+    protected $_binds = [];
+
+    /**
+     * @var string The raw SQL query string.
+     */
+    protected $_query;
+
+    /**
+     * @var array An array to store profiling information (optional).
+     */
+    protected $_profiler = [];
 
     /**
      * Constructor.
@@ -228,9 +193,11 @@ class Database
                     }
                     break;
                 case 'oracle':
+                case 'oci':
                     $dsn = "oci:dbname={$pro['host']}/{$pro['db']}";
                     break;
                 case 'firebird':
+                case 'fdb':
                     $dsn = "firebird:dbname={$pro['host']}";
                     break;
                 default:
@@ -251,11 +218,8 @@ class Database
             $pdo = new \PDO($dsn, $pro['username'], $pro['password'], $options);
             $this->pdo[$connectionName] = $pdo;
             $this->schema = $pro['db'];
-
         } catch (\PDOException $e) {
-            $this->_error = ['code' => (int) $e->getCode(), 'message' => 'Error connection: ' . $e->getMessage()];
-            log_message('error', 'db->connect() : ' . $e->getMessage());
-            throw new \Exception('Connect Error: ' . (int) $e->getCode() . ': ' . $e->getMessage(), (int) $e->getCode());
+            $this->db_error_log($e, __FUNCTION__, 'Error connection');
         }
     }
 
@@ -360,337 +324,33 @@ class Database
      */
     public function rawQuery($query, $bindParams = null, $fetch = 'get')
     {
+        $this->_startProfiler(__FUNCTION__);
+        $this->_profiler['binds'] = []; // Initialize the binds array
         try {
+            // Expand asterisks in query
+            $query = $this->_expandAsterisksInQuery($query);
             $stmt = $this->pdo[$this->connectionName]->prepare($query);
+            $this->_profiler['query'] = $query;
 
             if ($bindParams !== null) {
-                // Bind parameters based on their type
                 if (is_array($bindParams)) {
-                    // Determine if bindParams is positional or named
-                    $isPositional = array_values($bindParams) === $bindParams;
-
-                    if ($isPositional) {
-                        $stmt->execute($bindParams);
-                    } else {
-                        foreach ($bindParams as $param => $value) {
-                            $stmt->bindValue(':' . $param, $value);
-                        }
-                        $stmt->execute();
-                    }
+                    $this->_bindParams($stmt, $bindParams);
                 } else {
                     throw new \PDOException('Bind parameters must be provided as an array', 400);
                 }
-            } else {
-                $stmt->execute();
             }
 
-            // Store the last executed SQL query
-            if (!$this->isEagerMode)
-                $this->_lastQuery = $query;
+            // Generate the full query with binds
+            $this->_generateFullQuery($query, $bindParams);
 
-            // Fetch results based on the fetch parameter
+            $stmt->execute();
             $result = ($fetch === 'get') ? $stmt->fetchAll(\PDO::FETCH_ASSOC) : $stmt->fetch(\PDO::FETCH_ASSOC);
-
-            return $result;
         } catch (\PDOException $e) {
-            $this->_error = ['code' => (int) $e->getCode(), 'message' => 'Error executing raw SQL query: ' . $e->getMessage()];
-            log_message('error', 'db->rawQuery() : ' . $e->getMessage());
-            throw new \Exception('Error executing raw SQL query: ' . $e->getMessage(), (int) $e->getCode());
+            $this->db_error_log($e, __FUNCTION__);
         }
-    }
+        $this->_stopProfiler();
 
-    /**
-     * Inserts data into a specified table using a dynamically generated SQL INSERT statement.
-     *
-     * @param string $table The name of the table to insert data into.
-     * @param array $data An associative array where keys represent column names and values represent corresponding data to be inserted.
-     *
-     * @return array Returns an array containing information about the insertion status:
-     *               - 'code' (int): The status code indicating the success or failure of the insertion (201 for success, 422 for failure).
-     *               - 'id' (mixed): The last inserted ID if the insertion was successful; otherwise, null.
-     *               - 'data' (array): The sanitized data that was attempted to be inserted.
-     *               - 'message' (string): A status message indicating the outcome of the insertion operation.
-     */
-    public function insert($table, $data)
-    {
-        if ($this->isMultiDimensionalArray($data)) {
-            return $this->insertBatch($table, $data);
-        }
-
-        try {
-            $this->beginTransaction(); // Begin transaction
-
-            $sanitize = $this->sanitizeColumn($table, $data);
-
-            // Build the SQL INSERT statement
-            $sql = $this->_lastQuery = $this->buildInsertQuery($table, $sanitize);
-
-            // Prepare the SQL statement
-            $stmt = $this->pdo[$this->connectionName]->prepare($sql);
-
-            // Bind each value to its placeholder
-            foreach ($sanitize as $key => $value) {
-                $stmt->bindValue(":$key", $this->sanitize($value));
-            }
-
-            // Execute the statement
-            $success = $stmt->execute();
-
-            // Get the number of affected rows
-            $affectedRows = $stmt->rowCount();
-
-            // Get the last inserted ID
-            $lastInsertId = $success ? $this->pdo[$this->connectionName]->lastInsertId() : null;
-
-            $this->commit(); // Commit transaction
-
-            // Return information about the insert operation
-            $response = [
-                'code' => $success ? 201 : 422,
-                'id' => $lastInsertId,
-                'message' => $success ? 'Data inserted successfully' : 'Failed to insert data',
-                'data' => $sanitize,
-            ];
-
-            trail($affectedRows, 'insert', $table, $sanitize);
-
-            // Reset the query builder's state
-            $this->reset();
-
-            return $response;
-        } catch (\PDOException $e) {
-            $this->rollback(); // Rollback transaction
-            $this->_error = ['code' => (int) $e->getCode(), 'message' => 'Error executing insert query: ' . $e->getMessage()];
-            log_message('error', 'db->insert() : ' . $e->getMessage());
-            throw new \Exception('Error executing insert query: ' . $e->getMessage(), (int) $e->getCode());
-        }
-    }
-
-    /**
-     * Insert multiple rows into the database table.
-     *
-     * @param string $table The name of the table to insert data into.
-     * @param array $data An array of data to insert. Each element represents a row to insert.
-     * @return array An array containing information about the insert operation.
-     * @throws \Exception If an error occurs during the insert operation.
-     */
-    public function insertBatch($table, $data)
-    {
-        // Arrays to store inserted IDs, successful data, and unsuccessful data
-        $insertedIds = [];
-        $successfulData = [];
-        $unsuccessfulData = [];
-
-        try {
-            $this->beginTransaction(); // Begin transaction
-
-            foreach ($data as $row) {
-                // Sanitize the data for the current row
-                $sanitize = $this->sanitizeColumn($table, $row);
-
-                // Build the SQL INSERT statement
-                $sql = $this->_lastQuery = $this->buildInsertQuery($table, $sanitize);
-
-                // Prepare the SQL statement
-                $stmt = $this->pdo[$this->connectionName]->prepare($sql);
-
-                // Bind each value to its placeholder
-                foreach ($sanitize as $key => $value) {
-                    $stmt->bindValue(":$key", $this->sanitize($value));
-                }
-
-                // Execute the statement
-                $success = $stmt->execute();
-
-                // Get the number of affected rows
-                $affectedRows = $stmt->rowCount();
-
-                // If the execution was successful
-                if ($success) {
-                    // Get the last inserted ID
-                    $lastInsertId = $this->pdo[$this->connectionName]->lastInsertId();
-                    // Store the inserted ID
-                    $insertedIds[] = $lastInsertId;
-                    // Store the sanitized data
-                    $successfulData[] = $sanitize;
-                } else {
-                    // Store the unsuccessful data
-                    $unsuccessfulData[] = $sanitize;
-                }
-            }
-
-            $this->commit(); // Commit transaction
-
-            // Return information about the insert operation
-            $response = [
-                'code' => 201,
-                'message' => 'Data inserted successfully',
-                'id' => $insertedIds,
-                'successful_data' => $successfulData,
-                'unsuccessful_data' => $unsuccessfulData,
-            ];
-
-            trail($affectedRows, 'insert', $table, $successfulData);
-
-            // Reset the query builder's state
-            $this->reset();
-
-            return $response;
-        } catch (\PDOException $e) {
-            $this->rollback(); // Rollback transaction
-            $this->_error = ['code' => (int) $e->getCode(), 'message' => 'Error executing insert query: ' . $e->getMessage()];
-            log_message('error', 'db->insertBatch() : ' . $e->getMessage());
-            // Throw an exception if an error occurs during the insert operation
-            throw new \Exception('Error executing insert query: ' . $e->getMessage(), (int) $e->getCode());
-        }
-    }
-
-    /**
-     * Updates data in a specified table using a dynamically generated SQL UPDATE statement.
-     *
-     * @param string $table The name of the table to update data in.
-     * @param array $data An associative array where keys represent column names and values represent corresponding data to be updated.
-     * @param string|array $condition (Optional) The condition to apply in the WHERE clause.
-     *
-     * @return array Returns an array containing information about the update status:
-     *               - 'code' (int): The status code indicating the success or failure of the update (200 for success, 422 for failure).
-     *               - 'affected_rows' (int): The number of rows affected by the update operation.
-     *               - 'message' (string): A status message indicating the outcome of the update operation.
-     *               - 'data' (array): The sanitized data that was attempted to be updated.
-     */
-    public function update($table, $data, $condition = NULL)
-    {
-        try {
-            if ($this->isMultiDimensionalArray($data)) {
-                throw new \PDOException('Batch updates are not supported using this function.', 422);
-            }
-
-            $this->beginTransaction(); // Begin transaction
-
-            $pkColumn = $this->getPrimaryKeyColumn($table);
-            $previous_values = trailPreviousData($table, $condition[$pkColumn], $pkColumn);
-
-            // Sanitize the column names
-            $sanitize = $this->sanitizeColumn($table, $data);
-
-            // Build the SQL UPDATE statement
-            $sql = $this->_lastQuery = $this->buildUpdateQuery($table, $sanitize, $condition);
-
-            // Prepare the SQL statement
-            $stmt = $this->pdo[$this->connectionName]->prepare($sql);
-
-            // Bind each value to its placeholder
-            foreach ($sanitize as $key => $value) {
-                $stmt->bindValue(":$key", $this->sanitize($value));
-            }
-
-            // Execute the statement
-            $success = $stmt->execute();
-
-            // Get the number of affected rows
-            $affectedRows = $stmt->rowCount();
-
-            $this->commit(); // Commit transaction
-
-            // Return information about the update operation
-            $response = [
-                'code' => $success ? 200 : 422,
-                'affected_rows' => $affectedRows,
-                'message' => $success ? 'Data updated successfully' : 'Failed to update data',
-                'data' => $sanitize,
-            ];
-
-            trail($affectedRows, 'update', $table, $sanitize, $previous_values);
-
-            // Reset the query builder's state
-            $this->reset();
-
-            return $response;
-        } catch (\PDOException $e) {
-            $this->rollback(); // Rollback transaction
-            $this->_error = ['code' => (int) $e->getCode(), 'message' => 'Error executing update query: ' . $e->getMessage()];
-            log_message('error', 'db->update() : ' . $e->getMessage());
-            throw new \Exception('Error executing update query: ' . $e->getMessage(), (int) $e->getCode());
-        }
-    }
-
-    /**
-     * Deletes data from a specified table based on the provided condition and returns the deleted data.
-     *
-     * @param string $table The name of the table to delete data from.
-     * @param string $condition (Optional) The condition to apply in the WHERE clause.
-     *
-     * @return array Returns an array containing information about the deletion status and the deleted data:
-     *               - 'code' (int): The status code indicating the success or failure of the deletion (200 for success, 422 for failure).
-     *               - 'affected_rows' (int): The number of rows affected by the delete operation.
-     *               - 'message' (string): A status message indicating the outcome of the deletion operation.
-     *               - 'data' (array): The data that was deleted.
-     */
-    public function delete($table, $condition = [])
-    {
-        try {
-            if (!is_array($condition) || empty($condition)) {
-                throw new \Exception('The condition must be an array and cannot be empty.', 422);
-            }
-
-            $this->beginTransaction(); // Begin transaction
-
-            $pkColumn = $this->getPrimaryKeyColumn($table);
-            $previous_values = trailPreviousData($table, $condition[$pkColumn], $pkColumn);
-
-            // Build the SQL SELECT statement to fetch data before deletion
-            $selectSql = $this->table($table)->where($condition)->getFullSql();
-
-            // Prepare and execute the SELECT statement
-            $selectStmt = $this->pdo[$this->connectionName]->prepare($selectSql);
-            $selectStmt->execute();
-
-            // Fetch the data before deletion
-            $deletedData = $selectStmt->fetchAll(\PDO::FETCH_ASSOC);
-
-            if (!empty($deletedData)) {
-                // Build the SQL DELETE statement
-                $deleteSql = $this->_lastQuery = $this->buildDeleteQuery($table, $condition);
-
-                // Prepare the SQL DELETE statement
-                $deleteStmt = $this->pdo[$this->connectionName]->prepare($deleteSql);
-
-                // Execute the SQL DELETE statement
-                $success = $deleteStmt->execute();
-
-                // Get the number of affected rows
-                $affectedRows = $deleteStmt->rowCount();
-
-                $this->commit(); // Commit transaction
-
-                // Return information about the deletion operation
-                $response = [
-                    'code' => $success ? 200 : 422,
-                    'affected_rows' => $affectedRows,
-                    'message' => $success ? 'Data deleted successfully' : 'Failed to delete data',
-                    'data' => $deletedData,
-                ];
-
-                trail($affectedRows, 'delete', $table, NULL, $previous_values);
-            } else {
-                $response = [
-                    'code' => 400,
-                    'message' => 'No data has been deleted',
-                    'data' => [],
-                ];
-            }
-
-            // Reset the query builder's state
-            $this->reset();
-
-            return $response;
-        } catch (\PDOException $e) {
-            $this->rollback(); // Rollback transaction
-            $this->_error = ['code' => (int) $e->getCode(), 'message' => 'Error executing delete query: ' . $e->getMessage()];
-            log_message('error', 'db->delete() : ' . $e->getMessage());
-
-            throw new \Exception('Error executing delete query: ' . $e->getMessage(), (int) $e->getCode());
-        }
+        return $result;
     }
 
     /**
@@ -733,11 +393,7 @@ class Database
             $this->table = trim($table);
             return $this;
         } catch (\PDOException $e) {
-            // Handle PDO exception
-            $this->_error = ['code' => (int) $e->getCode(), 'message' => 'Error accessing database: ' . $e->getMessage()];
-            log_message('error', 'db->table() : ' . $e->getMessage());
-
-            throw new \Exception('Error accessing database: ' . $e->getMessage(), (int) $e->getCode());
+            $this->db_error_log($e, __FUNCTION__, 'Error accessing database');
         }
     }
 
@@ -749,26 +405,19 @@ class Database
     public function reset()
     {
         $this->driver = 'mysql';
+        $this->connectionName = 'default';
         $this->table = null;
         $this->fields = '*';
         $this->limit = null;
         $this->orderBy = null;
         $this->groupBy = null;
-        $this->where = [];
-        $this->whereIn = [];
-        $this->whereNotIn = [];
-        $this->whereBetween = [];
-        $this->orWhere = [];
-        $this->orWhereIn = [];
-        $this->orWhereNotIn = [];
-        $this->orWhereBetween = [];
-        $this->having = [];
-        $this->joins = [];
-        $this->relations = [];
-        $this->connectionName = 'default';
+        $this->where = null;
+        $this->joins = null;
         $this->_error = [];
-        $this->secure = true;
-        $this->isEagerMode = false;
+        $this->_secure = true;
+        $this->_binds = [];
+        $this->_query = [];
+
         return $this;
     }
 
@@ -806,6 +455,508 @@ class Database
     }
 
     /**
+     * Builds a where clause for the query.
+     *
+     * This method allows for building where clauses with various options.
+     * You can either provide a single column name, value, operator, and where type
+     * or an array of columns with their corresponding values.
+     *
+     * @param mixed $columnName The column name or an associative array of column names and values.
+     * @param mixed $value (optional) The value to compare with the column.
+     * @param string $operator (optional) The comparison operator (e.g., '=', '<', '>', '<>', '!=', 'LIKE'). Defaults to '='.
+     * @param string $whereType (optional) The type of where clause (e.g., 'AND', 'OR'). Defaults to 'AND'.
+     * @throws \InvalidArgumentException If $columnName is not a string or an associative array.
+     *
+     * @return $this
+     */
+    public function where($columnName, $value = NULL, $operator = '=', $whereType = 'AND')
+    {
+        try {
+            // Validate input type
+            if (!is_string($columnName) && !is_array($columnName)) {
+                throw new \InvalidArgumentException('Invalid column name. Must be a string or an associative array.');
+            }
+
+            if (is_array($columnName)) {
+                foreach ($columnName as $column => $val) {
+                    if (!is_string($column)) {
+                        throw new \InvalidArgumentException('Invalid column name in array. Must be a string.');
+                    }
+                    $this->_buildWhereClause($column, $val, $operator, $whereType);
+                }
+            } else {
+                $this->_buildWhereClause($columnName, $value, $operator, $whereType);
+            }
+
+            return $this;
+        } catch (\InvalidArgumentException $e) {
+            $this->db_error_log($e, __FUNCTION__);
+        }
+    }
+
+    /**
+     * Adds a WHERE clause for the query.
+     *
+     * This method allows for building where clauses with various options.
+     * You can either provide a single column name, value, operator, and where type
+     * or an array of columns with their corresponding values.
+     *
+     * @param mixed $columnName The column name or an associative array of column names and values.
+     * @param mixed $value (optional) The value to compare with the column.
+     * @param string $operator (optional) The comparison operator (e.g., '=', '<', '>', '<>', '!=', 'LIKE'). Defaults to '='.
+     * @param string $whereType (optional) The type of where clause (e.g., 'AND', 'OR'). Defaults to 'OR'.
+     * @throws \InvalidArgumentException If $columnName is not a string or an associative array.
+     *
+     * @return $this
+     */
+    public function orWhere($columnName, $value = NULL, $operator = '=', $whereType = 'OR')
+    {
+        try {
+            // Validate input type
+            if (!is_string($columnName) && !is_array($columnName)) {
+                throw new \InvalidArgumentException('Invalid column name. Must be a string or an associative array.');
+            }
+
+            if (is_array($columnName)) {
+                foreach ($columnName as $column => $val) {
+                    if (!is_string($column)) {
+                        throw new \InvalidArgumentException('Invalid column name in array. Must be a string.');
+                    }
+                    $this->_buildWhereClause($column, $val, $operator, $whereType);
+                }
+            } else {
+                $this->_buildWhereClause($columnName, $value, $operator, $whereType);
+            }
+
+            return $this;
+        } catch (\InvalidArgumentException $e) {
+            $this->db_error_log($e, __FUNCTION__);
+        }
+    }
+
+    /**
+     * Adds a BETWEEN condition to the WHERE clause.
+     *
+     * This function allows you to specify a range for a column using the
+     * BETWEEN operator. It checks if the provided start and end values are integers,
+     * doubles, or represent time formats. If valid, it builds the WHERE clause with
+     * appropriate placeholders and the chosen `$whereType` (AND or OR).
+     *
+     * @param string $columnName The name of the column to compare.
+     * @param mixed $start The lower bound of the range.
+     * @param mixed $end The upper bound of the range.
+     * @param string $whereType (optional) The type of WHERE clause (AND or OR). Defaults to AND.
+     * @throws \InvalidArgumentException If the column name is not a string or the start/end values are invalid.
+     * @return $this This object for method chaining.
+     */
+    public function whereBetween($columnName, $start, $end, $whereType = 'AND')
+    {
+        try {
+            // Validate column name type
+            if (!is_string($columnName)) {
+                throw new \InvalidArgumentException('Invalid column name. Must be a string.');
+            }
+
+            // Validate and format start and end values
+            $formattedValues = [];
+            foreach ([$start, $end] as $value) {
+                if (is_int($value) || is_float($value)) {
+                    // Numeric value: no formatting needed
+                    $formattedValues[] = $value;
+                } else if (preg_match('/^\d{1,4}-\d{2}-\d{2}$/', $value)) {
+                    // Check for YYYY-MM-DD format (date)
+                    $formattedValues[] = $this->pdo[$this->connectionName]->quote($value);
+                } else if (preg_match('/^\d{2}:\d{2}:\d{2}$/', $value)) {
+                    // Check for HH:MM:SS format (time)
+                    $formattedValues[] = $this->pdo[$this->connectionName]->quote($value);
+                } else {
+                    throw new \InvalidArgumentException('Invalid start or end value for BETWEEN. Must be numeric, date (YYYY-MM-DD), or time (HH:MM:SS).');
+                }
+            }
+
+            // Ensure start is less than or equal to end for valid range
+            if (!($formattedValues[0] <= $formattedValues[1])) {
+                throw new \InvalidArgumentException('Start value must be less than or equal to end value for BETWEEN.');
+            }
+
+            $this->_buildWhereClause($columnName, $formattedValues, 'BETWEEN', $whereType);
+
+            return $this;
+        } catch (\InvalidArgumentException $e) {
+            $this->db_error_log($e, __FUNCTION__);
+        }
+    }
+
+    /**
+     * Adds a NOT BETWEEN condition to the WHERE clause.
+     *
+     * This function allows you to specify a range for a column using the
+     * NOT BETWEEN operator. It checks if the provided start and end values are integers,
+     * doubles, or represent time formats. If valid, it builds the WHERE clause with
+     * appropriate placeholders and the chosen `$whereType` (AND or OR).
+     *
+     * @param string $columnName The name of the column to compare.
+     * @param mixed $start The lower bound of the range.
+     * @param mixed $end The upper bound of the range.
+     * @param string $whereType (optional) The type of WHERE clause (AND or OR). Defaults to AND.
+     * @throws \InvalidArgumentException If the column name is not a string or the start/end values are invalid.
+     * @return $this This object for method chaining.
+     */
+    public function whereNotBetween($columnName, $start, $end, $whereType = 'AND')
+    {
+        try {
+            // Validate column name type
+            if (!is_string($columnName)) {
+                throw new \InvalidArgumentException('Invalid column name. Must be a string.');
+            }
+
+            // Validate and format start and end values
+            $formattedValues = [];
+            foreach ([$start, $end] as $value) {
+                if (is_int($value) || is_float($value)) {
+                    // Numeric value: no formatting needed
+                    $formattedValues[] = $value;
+                } else if (preg_match('/^\d{1,4}-\d{2}-\d{2}$/', $value)) {
+                    // Check for YYYY-MM-DD format (date)
+                    $formattedValues[] = $this->pdo[$this->connectionName]->quote($value);
+                } else if (preg_match('/^\d{2}:\d{2}:\d{2}$/', $value)) {
+                    // Check for HH:MM:SS format (time)
+                    $formattedValues[] = $this->pdo[$this->connectionName]->quote($value);
+                } else {
+                    throw new \InvalidArgumentException('Invalid start or end value for NOT BETWEEN. Must be numeric, date (YYYY-MM-DD), or time (HH:MM:SS).');
+                }
+            }
+
+            // Ensure start is less than or equal to end for valid range
+            if (!($formattedValues[0] <= $formattedValues[1])) {
+                throw new \InvalidArgumentException('Start value must be less than or equal to end value for NOT BETWEEN.');
+            }
+
+            $this->_buildWhereClause($columnName, $formattedValues, 'NOT BETWEEN', $whereType);
+            return $this;
+        } catch (\InvalidArgumentException $e) {
+            $this->db_error_log($e, __FUNCTION__);
+        }
+    }
+
+    /**
+     * Adds an IN condition to the WHERE clause.
+     *
+     * This function allows you to specify a list of values for a column using
+     * the IN operator. It builds the WHERE clause with appropriate placeholders
+     * and the chosen `$whereType` (AND or OR).
+     *
+     * @param string $column The name of the column to compare.
+     * @param array $value An array of values to check for inclusion.
+     * @param string $whereType (optional) The type of WHERE clause (AND or OR). Defaults to AND.
+     * @return $this This object for method chaining.
+     */
+    public function whereIn($column, $value, $whereType = 'AND')
+    {
+        try {
+            // Validate column name type
+            if (!is_string($column)) {
+                throw new \InvalidArgumentException('Invalid column name. Must be a string.');
+            }
+
+            if (!is_array($value)) {
+                throw new \InvalidArgumentException("Value for 'IN' operator must be an array");
+            }
+
+            $this->_buildWhereClause($column, $value, 'IN', $whereType);
+            return $this;
+        } catch (\InvalidArgumentException $e) {
+            $this->db_error_log($e, __FUNCTION__);
+        }
+    }
+
+    /**
+     * Adds a NOT IN condition to the WHERE clause.
+     *
+     * This function allows you to specify a list of values for a column using
+     * the NOT IN operator. It builds the WHERE clause with appropriate placeholders
+     * and the chosen `$whereType` (AND or OR).
+     *
+     * @param string $column The name of the column to compare.
+     * @param array $value An array of values to check for inclusion.
+     * @param string $whereType (optional) The type of WHERE clause (AND or OR). Defaults to AND.
+     * @return $this This object for method chaining.
+     */
+    public function whereNotIn($column, $value, $whereType = 'AND')
+    {
+        try {
+            // Validate column name type
+            if (!is_string($column)) {
+                throw new \InvalidArgumentException('Invalid column name. Must be a string.');
+            }
+
+            if (!is_array($value)) {
+                throw new \InvalidArgumentException("Value for 'NOT IN' operator must be an array");
+            }
+
+            $this->_buildWhereClause($column, $value, 'NOT IN', $whereType);
+            return $this;
+        } catch (\InvalidArgumentException $e) {
+            $this->db_error_log($e, __FUNCTION__);
+        }
+    }
+
+    /**
+     * Performs a join operation on the current query.
+     *
+     * This function allows you to join another table to the current query
+     * based on specified columns and a join type.
+     *
+     * @param string $tableToJoin The name of the table to join.
+     * @param string $columnInTableJoin The column name in the joined table.
+     * @param string $columnInTableRefer The column name in the current table for reference.
+     * @param string $joinType (optional) The type of join (e.g., 'LEFT', 'RIGHT', 'INNER'). Defaults to 'LEFT'.
+     * @throws \InvalidArgumentException If any of the column names or join type are invalid.
+     * @return $this This object for method chaining.
+     */
+    public function join($tableToJoin, $columnInTableJoin, $columnInTableRefer, $joinType = 'LEFT')
+    {
+        // Validate input parameters
+        if (!is_string($tableToJoin) || !is_string($columnInTableJoin) || !is_string($columnInTableRefer)) {
+            throw new \InvalidArgumentException('Invalid column names or table name provided.');
+        }
+
+        $validJoinTypes = ['LEFT', 'RIGHT', 'INNER'];
+        if (!in_array(strtoupper($joinType), $validJoinTypes)) {
+            throw new \InvalidArgumentException('Invalid join type. Valid types are: ' . implode(', ', $validJoinTypes));
+        }
+
+        if (empty($this->table)) {
+            throw new \Exception('No table selected', 400);
+        }
+
+        // Build the join clause
+        $this->joins .= " $joinType JOIN `$tableToJoin` ON `$tableToJoin`.`$columnInTableJoin` = `$this->table`.`$columnInTableRefer`";
+
+        return $this;
+    }
+
+    /**
+     * Builds a WHERE clause fragment based on provided conditions.
+     *
+     * This function is used internally to construct WHERE clause parts based on
+     * column name, operator, value(s), and WHERE type (AND or OR). It handles
+     * different operators like `=`, `IN`, `NOT IN`, `BETWEEN`, and `NOT BETWEEN`.
+     * It uses placeholders (`?`) for values and builds the appropriate clause structure.
+     * This function also merges the provided values into the internal `_binds` array
+     * for later binding to the prepared statement.
+     *
+     * @param string $columnName The name of the column to compare.
+     * @param mixed $value The value or an array of values for the comparison.
+     * @param string $operator (optional) The comparison operator (e.g., =, IN, BETWEEN). Defaults to =.
+     * @param string $whereType (optional) The type of WHERE clause (AND or OR). Defaults to AND.
+     * @throws \InvalidArgumentException If invalid operator or value format is provided.
+     */
+    private function _buildWhereClause($columnName, $value, $operator = '=', $whereType = 'AND')
+    {
+        if (!isset($this->where)) {
+            $this->where = "";
+        } else {
+            $this->where .= " $whereType ";
+        }
+
+        $placeholder = '?'; // Use a single placeholder for all conditions
+
+        switch ($operator) {
+            case 'IN':
+            case 'NOT IN':
+                if (!is_array($value)) {
+                    throw new \InvalidArgumentException('Value for IN or NOT IN operator must be an array');
+                }
+                $this->where .= "$columnName $operator (" . implode(',', array_fill(0, count($value), $placeholder)) . ")";
+                $this->_binds = array_merge($this->_binds, $value);
+                break;
+            case 'BETWEEN':
+            case 'NOT BETWEEN':
+                if (!is_array($value) || count($value) !== 2) {
+                    throw new \InvalidArgumentException("Value for 'BETWEEN' or 'NOT BETWEEN' operator must be an array with two elements (start and end)");
+                }
+                $this->where .= "($columnName $operator $placeholder AND $placeholder)";
+                $this->_binds = array_merge($this->_binds, $value);
+                break;
+            default:
+                $this->where .= "$columnName $operator $placeholder";
+                $this->_binds[] = $value;
+        }
+    }
+
+    /**
+     * Executes the built query and fetches results as associative arrays.
+     *
+     * This function prepares the built query string, binds any parameters,
+     * executes the query, and fetches the results as associative arrays.
+     * It also handles potential exceptions and profiler logging.
+     *
+     * @return array The fetched results as associative arrays.
+     * @throws \PDOException If an error occurs during query execution.
+     */
+    public function get()
+    {
+        // Build the final SELECT query string
+        $this->_buildSelectQuery();
+
+        // Start profiler for performance measurement 
+        $this->_startProfiler(__FUNCTION__);
+
+        // Prepare the query statement
+        $stmt = $this->pdo[$this->connectionName]->prepare($this->_query);
+
+        // Bind parameters if any
+        if (!empty($this->_binds)) {
+            $this->_bindParams($stmt, $this->_binds);
+        }
+
+        try {
+            // Log the query for debugging 
+            $this->_profiler['query'] = $this->_query;
+
+            // Generate the full query string with bound values 
+            $this->_generateFullQuery($this->_query, $this->_binds);
+
+            // Execute the prepared statement
+            $stmt->execute();
+
+            // Fetch all results as associative arrays
+            $result = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+
+            // Process eager loading if implemented 
+            // $result = $this->_processEagerLoading($result);
+
+        } catch (\PDOException $e) {
+            // Log database errors
+            $this->db_error_log($e, __FUNCTION__);
+            throw $e; // Re-throw the exception
+        }
+
+        // Stop profiler 
+        $this->_stopProfiler();
+
+        // Reset internal properties for next query
+        $this->reset();
+
+        return $result;
+    }
+
+    /**
+     * Executes the built query and fetches the first result as an associative array.
+     *
+     * This function behaves similarly to `get`, but it fetches only the first
+     * result as an associative array and returns it. This is useful for cases
+     * where you only need a single record.
+     *
+     * @return mixed The first fetched result as an associative array, or null if no results found.
+     * @throws \PDOException If an error occurs during query execution.
+     */
+    public function fetch()
+    {
+        // Set limit to 1 to ensure only 1 data return
+        $this->limit(1);
+
+        // Build the final SELECT query string
+        $this->_buildSelectQuery();
+
+        // Start profiler for performance measurement
+        $this->_startProfiler(__FUNCTION__);
+
+        // Prepare the query statement
+        $stmt = $this->pdo[$this->connectionName]->prepare($this->_query);
+
+        // Bind parameters if any
+        if (!empty($this->_binds)) {
+            $this->_bindParams($stmt, $this->_binds);
+        }
+
+        try {
+            // Log the query for debugging
+            $this->_profiler['query'] = $this->_query;
+
+            // Generate the full query string with bound values
+            $this->_generateFullQuery($this->_query, $this->_binds);
+
+            // Execute the prepared statement
+            $stmt->execute();
+
+            // Fetch only the first result as an associative array
+            $result = $stmt->fetch(\PDO::FETCH_ASSOC);
+
+            // Process eager loading if implemented 
+            // $result = $this->_processEagerLoading($result);
+
+        } catch (\PDOException $e) {
+            // Log database errors
+            $this->db_error_log($e, __FUNCTION__);
+            throw $e; // Re-throw the exception
+        }
+
+        // Stop profiler
+        $this->_stopProfiler();
+
+        // Reset internal properties for next query
+        $this->reset();
+
+        // Return the first result or null if not found
+        return $result;
+    }
+
+    /**
+     * Builds the final SELECT query string based on the configured options.
+     *
+     * This function combines all the query components like selected fields, table,
+     * joins, WHERE clause, GROUP BY, ORDER BY, and LIMIT into a single SQL query string.
+     *
+     * @return $this This object for method chaining.
+     * @throws \InvalidArgumentException If an asterisk (*) is used in the select clause
+     *                                   and no table is specified.
+     */
+    private function _buildSelectQuery()
+    {
+        // Build the basic SELECT clause with fields
+        $this->_query = "SELECT " . ($this->fields === '*' ? '*' : $this->fields) . " FROM ";
+
+        // Append table name with schema (if provided)
+        if (empty($this->schema)) {
+            $this->_query .= "`$this->table`";
+        } else {
+            $this->_query .= "`$this->schema`.`$this->table`";
+        }
+
+        // Add JOIN clauses if available
+        if ($this->joins) {
+            $this->_query .= $this->joins;
+        }
+
+        // Add WHERE clause if conditions exist
+        if ($this->where) {
+            $this->_query .= " WHERE " . $this->where;
+        }
+
+        // Add GROUP BY clause if specified
+        if ($this->groupBy) {
+            $this->_query .= " GROUP BY " . $this->groupBy;
+        }
+
+        // Add ORDER BY clause if specified
+        if ($this->orderBy) {
+            $this->_query .= " ORDER BY " . $this->orderBy;
+        }
+
+        // Add LIMIT clause if specified
+        if ($this->limit) {
+            $this->_query .= " LIMIT " . $this->limit;
+        }
+
+        // Expand asterisks in the query (replace with actual column names)
+        $this->_query = $this->_expandAsterisksInQuery($this->_query);
+
+        return $this;
+    }
+
+    /**
      * Set the order by columns and directions.
      *
      * @param string|array $columns The order by columns.
@@ -820,886 +971,52 @@ class Database
             throw new \InvalidArgumentException('Order direction must be "ASC" or "DESC".');
         }
 
-        $this->orderBy = is_array($columns) ? $columns : [[$columns, $direction]];
+        if (is_array($columns)) {
+            $orderBy = [];
+            foreach ($columns as $column => $dir) {
+                $direction = strtoupper(!in_array(strtoupper($dir), ['ASC', 'DESC']) ? 'DESC' : $dir); // Set default to DESC if is not match 
+                $orderBy[] = "$column $direction";
+            }
+            $this->orderBy = implode(', ', $orderBy);
+        } else {
+            $this->orderBy = "$columns $direction";
+        }
+
         return $this;
     }
 
     /**
-     * Set the group by columns.
+     * Sets the GROUP BY clause for the query.
      *
-     * @param string|array $columns The group by columns.
-     * @return $this
+     * This function allows you to specify one or more columns to group the results by.
+     *
+     * @param mixed $columns The column name(s) to group by. Can be a single string or an array of column names.
+     * @throws \InvalidArgumentException If an invalid column name is provided.
+     * @return $this This object for method chaining.
      */
     public function groupBy($columns)
     {
-        $this->groupBy = is_array($columns) ? $columns : [$columns];
-        return $this;
-    }
-
-    /**
-     * Add a condition for WHERE clause.
-     *
-     * @param string|array $column The column name or an array of column names.
-     * @param mixed $value The value.
-     * @param string|null $param The comparison operator.
-     * @return $this
-     */
-    public function where($column, $value = null, $param = null)
-    {
-        if (is_array($column)) {
-            foreach ($column as $col => $val) {
-                $this->where[] = [$col, '=', $this->sanitize($val)];
+        if (is_string($columns)) {
+            // Validate column name, Allow commas for multiple columns
+            if (!preg_match('/^[a-zA-Z0-9._, ]+$/', $columns)) {
+                throw new \InvalidArgumentException('Invalid column name(s) for groupBy.');
             }
+            $this->groupBy = "$columns";
+        } else if (is_array($columns)) {
+            $groupBy = [];
+            foreach ($columns as $column) {
+                // Validate column name
+                if (!preg_match('/^[a-zA-Z0-9._]+$/', $column)) {
+                    throw new \InvalidArgumentException('Invalid column name in groupBy array.');
+                }
+                $groupBy[] = "`$column`";
+            }
+            $this->groupBy = implode(', ', $groupBy);
         } else {
-            // If $param is provided, use it for the comparison operator, otherwise use '='
-            $operator = $param !== null ? $param : '=';
-
-            // Add the condition to the where array
-            $this->where[] = [$column, $operator, $this->sanitize($value)];
+            throw new \InvalidArgumentException('groupBy expects a string or an array of column names.');
         }
+
         return $this;
-    }
-
-    /**
-     * Add a condition for WHERE IN clause.
-     *
-     * @param string $column The column name.
-     * @param array $values The values.
-     * @return $this
-     */
-    public function whereIn($column, $values)
-    {
-        $this->whereIn[] = [$column, $this->sanitize($values)];
-        return $this;
-    }
-
-    /**
-     * Add a condition for WHERE NOT IN clause.
-     *
-     * @param string $column The column name.
-     * @param array $values The values.
-     * @return $this
-     */
-    public function whereNotIn($column, $values)
-    {
-        $this->whereNotIn[] = [$column, $this->sanitize($values)];
-        return $this;
-    }
-
-    /**
-     * Add a condition for WHERE BETWEEN clause.
-     *
-     * @param string $column The column name.
-     * @param mixed $start The start value.
-     * @param mixed $end The end value.
-     * @return $this
-     */
-    public function whereBetween($column, $start, $end)
-    {
-        $this->whereBetween[] = [$column, $this->sanitize($start), $this->sanitize($end)];
-        return $this;
-    }
-
-    /**
-     * Add a condition for OR WHERE clause.
-     *
-     * @param string $column The column name.
-     * @param mixed $value The value.
-     * @param string|null $param The comparison operator.
-     * @return $this
-     */
-    public function orWhere($column, $value, $param = null)
-    {
-        if (is_array($column)) {
-            foreach ($column as $col => $val) {
-                $this->orWhere[] = [$col, '=', $this->sanitize($val)];
-            }
-        } else {
-            // If $param is provided, use it for the comparison operator, otherwise use '='
-            $operator = $param !== null ? $param : '=';
-
-            // Add the condition to the where array
-            $this->orWhere[] = [$column, $operator, $this->sanitize($value)];
-        }
-        return $this;
-    }
-
-    /**
-     * Add a condition for OR WHERE IN clause.
-     *
-     * @param string $column The column name.
-     * @param array $values The values.
-     * @return $this
-     */
-    public function orWhereIn($column, $values)
-    {
-        $this->orWhereIn[] = [$column, $this->sanitize($values)];
-        return $this;
-    }
-
-    /**
-     * Add a condition for OR WHERE NOT IN clause.
-     *
-     * @param string $column The column name.
-     * @param array $values The values.
-     * @return $this
-     */
-    public function orWhereNotIn($column, $values)
-    {
-        $this->orWhereNotIn[] = [$column, $this->sanitize($values)];
-        return $this;
-    }
-
-    /**
-     * Add a condition for OR WHERE BETWEEN clause.
-     *
-     * @param string $column The column name.
-     * @param mixed $start The start value.
-     * @param mixed $end The end value.
-     * @return $this
-     */
-    public function orWhereBetween($column, $start, $end)
-    {
-        $this->orWhereBetween[] = [$column, $this->sanitize($start), $this->sanitize($end)];
-        return $this;
-    }
-
-    /**
-     * Add a HAVING clause to the query.
-     *
-     * @param string $column The column name.
-     * @param mixed $value The value.
-     * @param string|null $param The comparison operator.
-     * @return $this
-     */
-    public function having($column, $value = null, $param = null)
-    {
-        if (is_array($column)) {
-            foreach ($column as $col => $val) {
-                $this->having[] = [$col, '=', $this->sanitize($val)];
-            }
-        } else {
-            // If $param is provided, use it for the comparison operator, otherwise use '='
-            $operator = $param !== null ? $param : '=';
-
-            // Add the condition to the having array
-            $this->having[] = [$column, $operator, $this->sanitize($value)];
-        }
-        return $this;
-    }
-
-    /**
-     * Add a join clause to the query.
-     *
-     * @param string $table The table to join.
-     * @param string $condition The join condition.
-     * @param string $joinType The type of join (e.g., INNER, LEFT, RIGHT, OUTER, LEFT OUTER, RIGHT OUTER, NATURAL).
-     * @return $this
-     * @throws \InvalidArgumentException If the $joinType parameter is not a valid join type.
-     */
-    public function join($table, $condition, $joinType = 'LEFT')
-    {
-        // List of valid join types
-        $validJoinTypes = ['INNER', 'LEFT', 'RIGHT', 'OUTER', 'LEFT OUTER', 'RIGHT OUTER', 'NATURAL'];
-
-        // Check if joinType is valid
-        if (!in_array(strtoupper($joinType), $validJoinTypes)) {
-            throw new \InvalidArgumentException('Invalid join type. Allowed values are INNER, LEFT, RIGHT, OUTER, LEFT OUTER, RIGHT OUTER, NATURAL.');
-        }
-
-        $this->joins[] = [strtoupper($joinType), $table, $condition];
-        return $this;
-    }
-
-    /**
-     * Specify eager loading for a relationship using 'get' type.
-     *
-     * @param string $alias The alias for the relationship.
-     * @param string $table The related table name.
-     * @param string $fk_id The foreign key column in the related table.
-     * @param string $pk_id The primary key column in the current table.
-     * @param Closure|null $callback An optional callback to customize the eager load.
-     * @return $this
-     */
-    public function with($alias, $table, $fk_id, $pk_id, \Closure $callback = null)
-    {
-        $this->relations[$alias] = ['type' => 'get', 'details' => compact('table', 'fk_id', 'pk_id', 'callback')];
-        return $this;
-    }
-
-    /**
-     * Specify eager loading for a relationship using 'fetch' type.
-     *
-     * @param string $alias The alias for the relationship.
-     * @param string $table The related table name.
-     * @param string $fk_id The foreign key column in the related table.
-     * @param string $pk_id The primary key column in the current table.
-     * @param Closure|null $callback An optional callback to customize the eager load.
-     * @return $this
-     */
-    public function withOne($alias, $table, $fk_id, $pk_id, \Closure $callback = null)
-    {
-        $this->relations[$alias] = ['type' => 'fetch', 'details' => compact('table', 'fk_id', 'pk_id', 'callback')];
-        return $this;
-    }
-
-    /**
-     * Retrieve the result of the query with pagination.
-     *
-     * @param int $currentPage The current page number.
-     * @param int $limit The limit per page.
-     * @return array The paginated query result.
-     * @throws \Exception If there's an error accessing the database or if the table does not exist.
-     */
-    public function paginate($currentPage = 1, $limit = 10)
-    {
-        // Calculate offset
-        $offset = ($currentPage - 1) * $limit;
-
-        // Build the main query
-        $query = $this->buildQuery();
-
-        try {
-            // Create a separate query to get total count
-            switch ($this->driver) {
-                case 'mysql':
-                case 'pgsql':
-                    $sqlTotal = 'SELECT COUNT(*) count ' . substr($query['sql'], strpos($query['sql'], 'FROM'));
-                    break;
-                case 'mssql':
-                    $sqlTotal = 'SELECT COUNT(*) count FROM (' . $query['sql'] . ') AS subquery';
-                    break;
-                case 'oracle':
-                    $sqlTotal = 'SELECT COUNT(*) count FROM (' . $query['sql'] . ')';
-                    break;
-                default:
-                    throw new \Exception('Unsupported database driver for paginate()');
-            }
-
-            // Execute the total count query
-            $stmtTotal = $this->pdo[$this->connectionName]->prepare($sqlTotal);
-            $stmtTotal->execute($query['bindings']);
-            $totalResult = $stmtTotal->fetch(\PDO::FETCH_ASSOC);
-
-            // Get total count
-            $total = $totalResult['count'];
-
-            // Calculate total pages
-            $totalPages = ceil($total / $limit);
-
-            // Add LIMIT and OFFSET clauses to the main query
-            switch ($this->driver) {
-                case 'mysql':
-                    $query['sql'] .= ' LIMIT ' . $limit . ' OFFSET ' . $offset;
-                    break;
-                case 'mssql':
-                    $query['sql'] = "SELECT * FROM (SELECT *, ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS RowNum FROM (" . $query['sql'] . ") AS innerQuery) AS outerQuery WHERE RowNum BETWEEN $offset + 1 AND $offset + $limit";
-                    break;
-                case 'oracle':
-                    $query['sql'] = 'SELECT * FROM (SELECT innerQuery.*, ROWNUM AS rn FROM (' . $query['sql'] . ') innerQuery WHERE ROWNUM <= ' . ($offset + $limit) . ') WHERE rn > ' . $offset;
-                    break;
-                default:
-                    throw new \Exception('Unsupported database driver for paginate()');
-            }
-
-            // Execute the main query
-            $stmt = $this->pdo[$this->connectionName]->prepare($query['sql']);
-            $stmt->execute($query['bindings']);
-            $result = $stmt->fetchAll(\PDO::FETCH_ASSOC);
-
-            // Calculate next page
-            $nextPage = ($currentPage < $totalPages) ? $currentPage + 1 : null;
-
-            // Calculate previous page
-            $previousPage = ($currentPage > 1) ? $currentPage - 1 : null;
-
-            // Adjust array keys to start from previous count
-            $startIndex = ($currentPage - 1) * $limit;
-            $result = array_combine(range($startIndex, $startIndex + count($result) - 1), $result);
-
-            // Store the last executed SQL query
-            if (!$this->isEagerMode)
-                $this->_lastQuery = $query['sql'];
-
-            // Save connection name and relations temporarily
-            $_temp_connection = $this->connectionName;
-            $_temp_relations = $this->relations;
-
-            // Reset the query builder's state
-            $this->reset();
-
-            // Eager loading
-            if (!empty($_temp_relations)) {
-                $this->isEagerMode = true;
-                $eager = Database::$_instance->connection($_temp_connection);
-                foreach ($_temp_relations as $alias => $relation) {
-                    $type = $relation['type'] === 'get' ? 'get' : 'fetch';
-                    $this->loadRelation($alias, $relation['details'], $result, $eager, $type);
-                }
-            }
-
-            return [
-                'data' => $result,
-                'total' => $total,
-                'current_page' => $currentPage,
-                'next_page' => $nextPage,
-                'previous_page' => $previousPage,
-                'last_page' => $totalPages
-            ];
-        } catch (\PDOException $e) {
-            // Handle PDO exception
-            $this->_error = ['code' => (int) $e->getCode(), 'message' => 'Error accessing database: ' . $e->getMessage()];
-            log_message('error', 'db->paginate() : ' . $e->getMessage());
-            throw new \Exception('Error accessing database: ' . $e->getMessage(), (int) $e->getCode());
-        }
-    }
-
-    /**
-     * Retrieve the result of the query.
-     *
-     * @return array The query result.
-     */
-    public function get()
-    {
-        // Build the main query
-        $query = $this->buildQuery();
-
-        // Prepare and execute the main SQL statement
-        $stmt = $this->pdo[$this->connectionName]->prepare($query['sql']);
-        $stmt->execute($query['bindings']);
-        $result = $stmt->fetchAll(\PDO::FETCH_ASSOC);
-
-        // Store the last executed SQL query
-        if (!$this->isEagerMode)
-            $this->_lastQuery = $query['sql'];
-
-        // Save connection name and relations temporarily
-        $_temp_connection = $this->connectionName;
-        $_temp_relations = $this->relations;
-
-        // Reset the query builder's state
-        $this->reset();
-
-        // Eager loading
-        if (!empty($_temp_relations)) {
-            $this->isEagerMode = true;
-            $eager = Database::$_instance->connection($_temp_connection);
-            foreach ($_temp_relations as $alias => $relation) {
-                $type = $relation['type'] === 'get' ? 'get' : 'fetch';
-                $this->loadRelation($alias, $relation['details'], $result, $eager, $type);
-            }
-        }
-
-        return $result;
-    }
-
-    /**
-     * Retrieve a single row result of the query.
-     *
-     * @return mixed The single row result.
-     */
-    public function fetch()
-    {
-        // Build the main query
-        $query = $this->buildQuery();
-
-        // Prepare and execute the main SQL statement
-        $stmt = $this->pdo[$this->connectionName]->prepare($query['sql']);
-        $stmt->execute($query['bindings']);
-        $result = $stmt->fetch(\PDO::FETCH_ASSOC);
-
-        // Store the last executed SQL query
-        if (!$this->isEagerMode)
-            $this->_lastQuery = $query['sql'];
-
-        // Save connection name and relations temporarily
-        $_temp_connection = $this->connectionName;
-        $_temp_relations = $this->relations;
-
-        // Reset the query builder's state
-        $this->reset();
-
-        // Eager loading
-        if (!empty($_temp_relations)) {
-            $this->isEagerMode = true;
-            $eager = Database::$_instance->connection($_temp_connection);
-            foreach ($_temp_relations as $alias => $relation) {
-                $type = $relation['type'] === 'get' ? 'get' : 'fetch';
-                $this->loadRelation($alias, $relation['details'], $result, $eager, $type);
-            }
-
-            if ($this->isMultiDimensionalArray($result) && count($result) === 1) {
-                $result = $result[0] ?? [];
-            }
-        }
-
-        return $result;
-    }
-
-    /**
-     * Retrieve the total count of rows returned by the query.
-     *
-     * @return int The total count of rows.
-     */
-    public function count()
-    {
-        // Build the main query to count rows
-        $query = $this->buildQuery();
-
-        // Adjust the query to perform a count
-        $query['sql'] = "SELECT COUNT(*) count FROM (" . $query['sql'] . ") as count_query";
-
-        // Prepare and execute the main SQL statement
-        $stmt = $this->pdo[$this->connectionName]->prepare($query['sql']);
-        $stmt->execute($query['bindings']);
-
-        // Fetch the count of rows
-        $count = $stmt->fetchColumn();
-
-        // Store the last executed SQL query
-        if (!$this->isEagerMode)
-            $this->_lastQuery = $query['sql'];
-
-        // Reset the query builder's state
-        $this->reset();
-
-        return $count;
-    }
-
-    /**
-     * Load a single relation and attach it to the main result.
-     *
-     * @param string $alias The alias for the relation.
-     * @param array $relation The relation details.
-     * @param mixed $result The main query result (array or single data).
-     * @param Database $eager The eager loading database instance.
-     * @param string $type The type of relation ('get' or 'fetch').
-     * @return mixed The main query result with attached related records.
-     */
-    private function loadRelation($alias, $relation, &$result, $eager, $type = 'get')
-    {
-        // Check if $result is not empty
-        if (empty($result)) {
-            return $result;
-        }
-
-        $table = $relation['table'];
-        $fk_id = $relation['fk_id'];
-        $pk_id = $relation['pk_id'];
-        $callback = $relation['callback'];
-
-        // Check if $result is a multidimensional array
-        $isMultiDimensional = $this->isMultiDimensionalArray($result);
-
-        // If $result is not an array, convert it into an array with one item
-        if (!$isMultiDimensional || !is_array($result)) {
-            $result = [$result];
-        }
-
-        // Extract all primary keys from the main result
-        $primaryKeys = array_column($result, $pk_id);
-
-        // Fetch related records using existing database instance
-        $relatedRecordsQuery = $eager
-            ->table($table)
-            ->whereIn($fk_id, $primaryKeys);
-
-        // Apply callback if provided
-        if ($callback instanceof \Closure) {
-            $callback($relatedRecordsQuery);
-        }
-
-        // Execute the related records query
-        if ($type === 'get') {
-            $relatedRecords = $relatedRecordsQuery->get();
-
-            // Group related records by foreign key
-            $groupedRelatedRecords = [];
-            foreach ($relatedRecords as $key => $relatedRecord) {
-                if (isset($relatedRecord[$fk_id]))
-                    $groupedRelatedRecords[$relatedRecord[$fk_id]][] = $relatedRecord;
-                else
-                    $groupedRelatedRecords[0][] = $relatedRecord;
-            }
-
-            // Attach related records to the main result
-            foreach ($result as &$item) {
-                if ($this->isMultiDimensionalArray($groupedRelatedRecords)) {
-                    foreach ($groupedRelatedRecords as $group) {
-                        $item[$alias] = $group ?? [];
-                    }
-                } else {
-                    $pkValue = $item[$pk_id];
-                    $item[$alias] = $groupedRelatedRecords[$pkValue] ?? [];
-                }
-            }
-        } else {
-            $relatedRecords = $relatedRecordsQuery->fetch();
-            if (count($result) === 1) {
-                $result[0][$alias] = $relatedRecords ?? [];
-            } else {
-                $result[$alias] = $relatedRecords ?? [];
-            }
-        }
-
-        // Reset the query builder's state
-        $this->reset();
-
-        return $result;
-    }
-
-    /**
-     * Build the SQL SELECT statement query string and bindings array based on the set parameters.
-     *
-     * @return array An array containing the SQL query string and the bindings array.
-     */
-    protected function buildQuery()
-    {
-        if (empty($this->table)) {
-            throw new \Exception('No table selected', 400);
-        }
-
-        $sql = 'SELECT ' . $this->fields . ' FROM ' . $this->table;
-        $bindings = [];
-
-        // JOIN clauses
-        if (!empty($this->joins)) {
-            $sql .= implode('', array_map(function ($join) {
-                return ' ' . $join[0] . ' JOIN ' . $join[1] . ' ON ' . $join[2];
-            }, $this->joins));
-        }
-
-        // WHERE clause
-        if (!empty($this->where)) {
-            $sql .= ' WHERE ' . implode(' AND ', array_map(function ($condition) use (&$bindings) {
-                $bindings[] = $condition[2];
-                return $condition[0] . ' ' . $condition[1] . ' ?';
-            }, $this->where));
-        }
-
-        // WHERE IN clause
-        if (!empty($this->whereIn)) {
-            $sql .= $this->containsWhere($sql, 'AND');
-            $sql .= implode(' AND ', array_map(function ($condition) use (&$bindings) {
-                if (is_array($condition[1])) {
-                    $values = implode(', ', array_fill(0, count($condition[1]), '?'));
-                    $bindings = array_merge($bindings, $condition[1]);
-                    return $condition[0] . ' IN (' . $values . ')';
-                } else if ($this->isSqlSubquery($condition[1])) {
-                    // Check if $condition[1] starts and ends with parentheses
-                    $isParenthesized = (substr($condition[1], 0, 1) === '(' && substr($condition[1], -1) === ')');
-                    // Concatenate the condition based on whether parentheses are present or not
-                    return $condition[0] . ' IN ' . ($isParenthesized ? $condition[1] : '(' . $condition[1] . ')');
-                } else {
-                    return $condition;
-                }
-            }, $this->whereIn));
-        }
-
-        // WHERE NOT IN clause
-        if (!empty($this->whereNotIn)) {
-            $sql .= $this->containsWhere($sql, 'AND');
-            $sql .= implode(' AND ', array_map(function ($condition) use (&$bindings) {
-                if (is_array($condition[1])) {
-                    $values = implode(', ', array_fill(0, count($condition[1]), '?'));
-                    $bindings = array_merge($bindings, $condition[1]);
-                    return $condition[0] . ' NOT IN (' . $values . ')';
-                } else if ($this->isSqlSubquery($condition[1])) {
-                    // Check if $condition[1] starts and ends with parentheses
-                    $isParenthesized = (substr($condition[1], 0, 1) === '(' && substr($condition[1], -1) === ')');
-                    // Concatenate the condition based on whether parentheses are present or not
-                    return $condition[0] . ' NOT IN ' . ($isParenthesized ? $condition[1] : '(' . $condition[1] . ')');
-                } else {
-                    return $condition;
-                }
-            }, $this->whereNotIn));
-        }
-
-        // WHERE BETWEEN clause
-        if (!empty($this->whereBetween)) {
-            foreach ($this->whereBetween as $condition) {
-                $sql .= $this->containsWhere($sql, 'AND');
-                $sql .= $condition[0] . ' BETWEEN ? AND ?';
-                $bindings[] = $condition[1];
-                $bindings[] = $condition[2];
-            }
-        }
-
-        // OR WHERE clause
-        if (!empty($this->orWhere)) {
-            $sql .= $this->containsWhere($sql, 'OR');
-            $sql .= implode(' OR ', array_map(function ($condition) use (&$bindings) {
-                $bindings[] = $condition[2];
-                return $condition[0] . ' ' . $condition[1] . ' ?';
-            }, $this->orWhere));
-        }
-
-        // OR WHERE IN clause
-        if (!empty($this->orWhereIn)) {
-            $sql .= $this->containsWhere($sql, 'OR');
-            $sql .= implode(' OR ', array_map(function ($condition) use (&$bindings) {
-                if (is_array($condition[1])) {
-                    $values = implode(', ', array_fill(0, count($condition[1]), '?'));
-                    $bindings = array_merge($bindings, $condition[1]);
-                    return $condition[0] . ' IN (' . $values . ')';
-                } else if ($this->isSqlSubquery($condition[1])) {
-                    // Check if $condition[1] starts and ends with parentheses
-                    $isParenthesized = (substr($condition[1], 0, 1) === '(' && substr($condition[1], -1) === ')');
-                    // Concatenate the condition based on whether parentheses are present or not
-                    return $condition[0] . ' IN ' . ($isParenthesized ? $condition[1] : '(' . $condition[1] . ')');
-                } else {
-                    return $condition;
-                }
-            }, $this->orWhereIn));
-        }
-
-        // OR WHERE NOT IN clause
-        if (!empty($this->orWhereNotIn)) {
-            $sql .= $this->containsWhere($sql, 'OR');
-            $sql .= implode(' OR ', array_map(function ($condition) use (&$bindings) {
-                if (is_array($condition[1])) {
-                    $values = implode(', ', array_fill(0, count($condition[1]), '?'));
-                    $bindings = array_merge($bindings, $condition[1]);
-                    return $condition[0] . ' NOT IN (' . $values . ')';
-                } else if ($this->isSqlSubquery($condition[1])) {
-                    // Check if $condition[1] starts and ends with parentheses
-                    $isParenthesized = (substr($condition[1], 0, 1) === '(' && substr($condition[1], -1) === ')');
-                    // Concatenate the condition based on whether parentheses are present or not
-                    return $condition[0] . ' NOT IN ' . ($isParenthesized ? $condition[1] : '(' . $condition[1] . ')');
-                } else {
-                    return $condition;
-                }
-            }, $this->orWhereNotIn));
-        }
-
-        // OR WHERE BETWEEN clause
-        if (!empty($this->orWhereBetween)) {
-            foreach ($this->orWhereBetween as $condition) {
-                $sql .= $this->containsWhere($sql, 'OR');
-                $sql .= $condition[0] . ' BETWEEN ? AND ?';
-                $bindings[] = $condition[1];
-                $bindings[] = $condition[2];
-            }
-        }
-
-        // GROUP BY clause
-        if (!empty($this->groupBy)) {
-            $sql .= ' GROUP BY ' . implode(', ', $this->groupBy);
-        }
-
-        // HAVING clause
-        if (!empty($this->having)) {
-            $sql .= ' HAVING ' . implode(' AND ', array_map(function ($condition) use (&$bindings) {
-                $bindings[] = $condition[2];
-                return $condition[0] . ' ' . $condition[1] . ' ?';
-            }, $this->having));
-        }
-
-        // ORDER BY clause
-        if (!empty($this->orderBy)) {
-            $sql .= ' ORDER BY ' . implode(', ', array_map(function ($order) {
-                return $order[0] . ' ' . strtoupper($order[1]);
-            }, $this->orderBy));
-        }
-
-        // LIMIT clause
-        if (!empty($this->limit)) {
-            if ($this->driver == 'mssql') {
-                $sql = preg_replace('/^\s*SELECT\s/i', 'SELECT TOP ' . intval($this->limit) . ' ', $sql);
-            } else {
-                $sql .= ' LIMIT ' . $this->limit;
-            }
-        }
-
-        return ['sql' => $sql, 'bindings' => $bindings];
-    }
-
-    /**
-     * Build an SQL INSERT statement with PDO binding.
-     *
-     * @param string $table The name of the table to insert data into.
-     * @param array $data An associative array where keys are column names and values are the corresponding values to insert.
-     * @return string|null The generated SQL INSERT statement or null if $data is not valid.
-     */
-    protected function buildInsertQuery($table, $data)
-    {
-        // Check if $data is an array and not empty
-        if (!is_array($data) || empty($data)) {
-            return;
-        }
-
-        // Construct column names string
-        $columns = implode(', ', array_keys($data));
-
-        // Construct placeholders for values
-        $placeholders = implode(', ', array_map(function ($key) {
-            return ":$key";
-        }, array_keys($data)));
-
-        // Construct the SQL insert statement
-        $sql = "INSERT INTO $table ($columns) VALUES ($placeholders)";
-
-        // Return the SQL statement
-        return $sql;
-    }
-
-    /**
-     * Build an SQL UPDATE statement with PDO binding.
-     *
-     * @param string $table The name of the table to update data in.
-     * @param array $data An associative array where keys are column names and values are the corresponding values to update.
-     * @param string|array $conditions Optional. The condition(s) to specify which rows to update.
-     * @return string|null The generated SQL UPDATE statement or null if $data is not valid.
-     */
-    protected function buildUpdateQuery($table, $data, $conditions = NULL)
-    {
-        // Check if $data is an array and not empty
-        if (!is_array($data) || empty($data)) {
-            return null;
-        }
-
-        // Construct column-value pairs
-        $setPairs = array_map(function ($key) {
-            return "$key = :$key";
-        }, array_keys($data));
-
-        // Construct the SET clause
-        $setClause = implode(', ', $setPairs);
-
-        // Construct the SQL update statement
-        $sql = "UPDATE $table SET $setClause";
-
-        if (!empty($conditions)) {
-            if (is_array($conditions)) {
-                $whereClause = [];
-                foreach ($conditions as $key => $value) {
-                    $whereClause[] = "$key = " . $this->sanitize($value);
-                }
-                $sql .= " WHERE " . implode(' AND ', $whereClause);
-            } else {
-                $sql .= " WHERE " . $this->sanitize($conditions);
-            }
-        }
-
-        // Return the SQL statement
-        return $sql;
-    }
-
-    /**
-     * Build an SQL DELETE statement with PDO binding.
-     *
-     * @param string $table The name of the table to delete from.
-     * @param string|array $conditions Optional. The condition(s) to specify which rows to delete.
-     * @return string|null The generated SQL DELETE statement or null if $condition is not valid.
-     */
-    protected function buildDeleteQuery($table, $conditions = NULL)
-    {
-        // Construct the SQL delete statement
-        $sql = "DELETE FROM $table";
-
-        // Add the condition if provided
-        if (!empty($conditions)) {
-            if (is_array($conditions)) {
-                // Construct WHERE conditions
-                $whereClause = [];
-                foreach ($conditions as $key => $value) {
-                    $whereClause[] = "$key = " . $this->sanitize($value);
-                }
-                $sql .= " WHERE " . implode(' AND ', $whereClause);
-            }
-        }
-
-        // Return the SQL statement
-        return $sql;
-    }
-
-    // HELPER
-
-    /**
-     * Begin a transaction.
-     *
-     * @return void
-     */
-    public function beginTransaction()
-    {
-        $this->pdo[$this->connectionName]->beginTransaction();
-    }
-
-    /**
-     * Commit a transaction.
-     *
-     * @return void
-     */
-    public function commit()
-    {
-        $this->pdo[$this->connectionName]->commit();
-    }
-
-    /**
-     * Rollback a transaction.
-     *
-     * @return void
-     */
-    public function rollback()
-    {
-        $this->pdo[$this->connectionName]->rollBack();
-    }
-
-    /**
-     * Get the generated SQL query string.
-     *
-     * @return string The SQL query string.
-     */
-    public function toSql()
-    {
-        return $this->buildQuery()['sql'];
-    }
-
-    /**
-     * Get the generated bind params.
-     *
-     * @return array The bind query array.
-     */
-    public function getBindings()
-    {
-        return $this->buildQuery()['bindings'];
-    }
-
-    /**
-     * Get the generated SQL query string with actual values.
-     *
-     * @return string The SQL query string with actual values.
-     */
-    public function getFullSql()
-    {
-        $query = $this->buildQuery();
-        $sql = $query['sql'];
-        $bindings = $query['bindings'];
-
-        // Replace placeholders with actual values
-        return vsprintf(str_replace('?', '%s', $sql), array_map(function ($value) {
-            return is_numeric($value) || $this->isSqlSubquery($value) ? $value : "'" . $value . "'";
-        }, $bindings));
-    }
-
-    /**
-     * Returns the last executed query.
-     *
-     * @return string|null The last executed query, or null if no query has been executed yet.
-     */
-    public function lastQuery()
-    {
-        return $this->_lastQuery;
-    }
-
-    /**
-     * Returns the last error that occurred during query execution.
-     *
-     * @return array|null The last error message and query, or null if no error has occurred yet.
-     */
-    public function lastError()
-    {
-        return $this->_error;
     }
 
     /**
@@ -1716,7 +1033,7 @@ class Database
         }
 
         // Check if secure mode is enabled
-        if ($this->secure) {
+        if ($this->_secure) {
             // Sanitize input to prevent XSS
             if (is_array($value)) {
                 // Sanitize each value in the array
@@ -1745,218 +1062,261 @@ class Database
      */
     public function secureInput($secure = true)
     {
-        $this->secure = $secure;
+        $this->_secure = $secure;
+        return $this;
+    }
+
+    # PROFILER SECTION
+
+    /**
+     * Returns the internal profiler data.
+     *
+     * This function allows you to access the profiler information collected
+     * during query execution, including method name, start and end times, query,
+     * binds, execution time, and status.
+     *
+     * @return array The profiler data.
+     */
+    public function profiler()
+    {
+        return $this->_profiler;
+    }
+
+    /**
+     * Starts the profiler for a specific method.
+     *
+     * This function initializes the profiler data structure when a query building
+     * method is called. It stores the method name, start time, and formatted start time.
+     *
+     * @param string $method The name of the method that initiated profiling.
+     */
+    private function _startProfiler($method)
+    {
+        $startTime = microtime(true);
+        $this->_profiler = [
+            'method' => $method,
+            'start' => $startTime,
+            'start_formatted' => date('Y-m-d H:i:s', (int) $startTime) . sprintf(".%02d", ($startTime - (int)$startTime) * 100),
+            'query' => null, // Placeholder for query string
+            'binds' => null,  // Placeholder for bound parameters
+            'end' => null,    // Placeholder for end time
+            'end_formatted' => null,  // Placeholder for formatted end time
+            'execution_time' => null,  // Placeholder for execution time
+            'status' => null,        // Placeholder for execution status
+        ];
+    }
+
+    /**
+     * Stops the profiler and calculates execution time and status.
+     *
+     * This function is called after query execution. It calculates the execution
+     * time, formats it, and sets the execution status based on predefined thresholds.
+     * It also updates the profiler data with end time, formatted end time, execution time, and status.
+     */
+    private function _stopProfiler()
+    {
+        $endTime = microtime(true);
+        $executionTime = $endTime - $this->_profiler['start'];
+
+        $this->_profiler['end'] = $endTime;
+        $this->_profiler['end_formatted'] = date('Y-m-d H:i:s', (int) $endTime) . sprintf(".%02d", ($endTime - (int) $endTime) * 100);
+
+        // Calculate and format execution time with milliseconds
+        $milliseconds = round(($executionTime - floor($executionTime)) * 1000, 2);
+        $totalSeconds = floor($executionTime);
+        $seconds = $totalSeconds % 60;
+        $minutes = floor(($totalSeconds % 3600) / 60);
+        $hours = floor($totalSeconds / 3600);
+
+        $formattedExecutionTime = '';
+        if ($totalSeconds == 0) {
+            $formattedExecutionTime = sprintf("%dms", $milliseconds);
+        } else if ($hours > 0) {
+            $formattedExecutionTime = sprintf("%dh %dm %ds %dms", $hours, $minutes, $seconds, $milliseconds);
+        } else if ($minutes > 0) {
+            $formattedExecutionTime = sprintf("%dm %ds %dms", $minutes, $seconds, $milliseconds);
+        } else {
+            $formattedExecutionTime = sprintf("%ds %dms", $seconds, $milliseconds);
+        }
+
+        $this->_profiler['execution_time'] = $formattedExecutionTime;
+
+        // Set execution status based on predefined thresholds
+        $this->_profiler['status'] = ($executionTime > 4) ? 'very slow' : (($executionTime > 1.5 && $executionTime <= 3.59) ? 'slow' : (($executionTime > 0.5 && $executionTime <= 1.49) ? 'fast' : 'very fast'));
+    }
+
+    # HELPER SECTION
+
+    /**
+     * Binds parameters to a prepared statement.
+     *
+     * This function iterates through the provided bind values and binds them
+     * to the prepared statement based on their data types. It supports positional
+     * and named parameters, throwing exceptions for invalid key formats or query
+     * structures. It also records the bound values for debugging purposes.
+     *
+     * @param \PDOStatement $stmt The prepared statement object.
+     * @param array $binds An associative array of values to bind to the query.
+     * @throws \PDOException If positional parameters use non-numeric keys or the query
+     *                       format is invalid for placeholders.
+     */
+    private function _bindParams(\PDOStatement $stmt, array $binds)
+    {
+        $query = $stmt->queryString;
+
+        // Check if the query contains positional or named parameters
+        $hasPositional = strpos($query, '?') !== false;
+        $hasNamed = preg_match('/:\w+/', $query);
+
+        foreach ($binds as $key => $value) {
+
+            $type = \PDO::PARAM_STR; // Default type to string
+
+            if (is_int($value)) {
+                $type = \PDO::PARAM_INT;
+            } else if (is_bool($value)) {
+                $type = \PDO::PARAM_BOOL;
+            }
+
+            if ($hasPositional) {
+                // Positional parameter
+                if (is_numeric($key)) {
+                    $stmt->bindValue($key + 1, $value, $type);
+                } else {
+                    throw new \PDOException('Positional parameters require numeric keys', 400);
+                }
+            } else if ($hasNamed) {
+                // Named parameter
+                $stmt->bindValue(':' . $key, $value, $type);
+            } else {
+                throw new \PDOException('Query must contain either positional (?) or named (:number, :param) placeholders', 400);
+            }
+
+            $this->_binds[] = $value;
+            $this->_profiler['binds'][] = $value; // Record only the value
+        }
+    }
+
+    /**
+     * Generates the full query string by replacing placeholders with bound values.
+     *
+     * This function analyzes the query string and bound parameters to determine
+     * if they use positional or named placeholders. It then iterates through
+     * the binds and replaces the corresponding placeholders in the query with
+     * quoted values. It also sets the full query string in the profiler data.
+     *
+     * @param string $query The SQL query string with placeholders.
+     * @param array $binds (optional) An associative array of values to bind to the query.
+     * @throws \PDOException If positional parameters use non-numeric keys or the query
+     *                       format is invalid for placeholders.
+     * @return $this This object for method chaining.
+     */
+    private function _generateFullQuery($query, $binds = null)
+    {
+        if (!empty($binds)) {
+            // Check if positional or named parameters are used
+            $hasPositional = strpos($query, '?') !== false;
+            $hasNamed = preg_match('/:\w+/', $query);
+
+            foreach ($binds as $key => $value) {
+                $quotedValue = is_numeric($value) ? $value : $this->pdo[$this->connectionName]->quote($value);
+
+                if ($hasPositional) {
+                    // Positional parameter: replace with quoted value
+                    if (is_numeric($key)) {
+                        $query = preg_replace('/\?/', $quotedValue, $query, 1);
+                    } else {
+                        throw new \PDOException('Positional parameters require numeric keys', 400);
+                    }
+                } else if ($hasNamed) {
+                    // Named parameter: replace with quoted value
+                    $query = str_replace(':' . $key, $quotedValue, $query);
+                } else {
+                    throw new \PDOException('Query must contain either positional (?) or named (:number, :param) placeholders', 400);
+                }
+            }
+        }
+
+        $this->_profiler['full_query'] = $query;
+
         return $this;
     }
 
     /**
-     * Sanitize column data to ensure that only valid columns are used.
+     * Expands asterisks (*) in the SELECT clause to include all table columns.
      *
-     * @param string $table The table name.
-     * @param array $data An associative array where keys represent column names and values represent corresponding data.
-     * @return array The sanitized column data.
-     * @throws \Exception If there's an error accessing the database or if the table does not exist.
-     */
-    protected function sanitizeColumn($table, $data)
-    {
-        // Get columns from table schema based on database driver
-        switch ($this->driver) {
-            case 'mysql':
-                $sql = "DESCRIBE {$this->schema}.$table";
-                $stmt = $this->pdo[$this->connectionName]->prepare($sql);
-                $stmt->execute();
-                $columns_table = $stmt->fetchAll(\PDO::FETCH_COLUMN);
-                break;
-            case 'mssql':
-                $sql = "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = ? AND TABLE_SCHEMA = ?";
-                $stmt = $this->pdo[$this->connectionName]->prepare($sql);
-                $stmt->execute([$table, $this->schema]);
-                $columns_table = $stmt->fetchAll(\PDO::FETCH_COLUMN);
-                break;
-            case 'oracle':
-                $sql = "SELECT COLUMN_NAME FROM ALL_TAB_COLUMNS WHERE TABLE_NAME = ? AND OWNER = ?";
-                $stmt = $this->pdo[$this->connectionName]->prepare($sql);
-                $stmt->execute([$table, $this->schema]);
-                $columns_table = $stmt->fetchAll(\PDO::FETCH_COLUMN);
-                break;
-            case 'firebird':
-                $sql = "SELECT RDB\$FIELD_NAME FROM RDB\$RELATION_FIELDS WHERE RDB\$RELATION_NAME = ? AND RDB\$OWNER_NAME = ?";
-                $stmt = $this->pdo[$this->connectionName]->prepare($sql);
-                $stmt->execute([$table, $this->schema]);
-                $columns_table = $stmt->fetchAll(\PDO::FETCH_COLUMN);
-                break;
-            default:
-                throw new \Exception("Unsupported database driver '{$this->driver}'", 500);
-        }
-
-        // Filter $data array based on $columns_table
-        $data = array_intersect_key($data, array_flip($columns_table));
-
-        // Sanitize each value in the $data array
-        $data = array_map(function ($value) {
-            return !is_null($value) && $value !== '' ? $this->sanitize($value) : $value;
-        }, $data);
-
-        return $data;
-    }
-
-    /**
-     * Check if the given string contains the word "WHERE".
+     * This function handles two scenarios:
+     * 1. SELECT * FROM table: Replaces * with all columns from the table.
+     * 2. SELECT fields FROM table: Adds .* to tables not already specified in fields.
+     * It uses regular expressions to identify the query pattern and replace the asterisk
+     * accordingly.
      *
-     * @param string $str The input string to check.
-     * @return string True if the string contains "WHERE", false otherwise.
+     * @param string $query The SQL query string.
+     * @return string The modified query string with expanded columns.
      */
-    protected function containsWhere($str, $change)
+    private function _expandAsterisksInQuery($query)
     {
-        return strpos($str, 'WHERE') !== false ? ' ' . $change . ' ' : ' WHERE ';
-    }
+        // Scenario 1: SELECT * FROM table
+        if (preg_match('/SELECT\s+\*\s+FROM\s+([\w]+)/i', $query, $matches)) {
+            $tables = [$matches[1]];
 
-    /**
-     * Check if an array is multi-dimensional.
-     *
-     * @param array $array The array to check.
-     * @return bool True if the array is multi-dimensional, false otherwise.
-     */
-    private function isMultiDimensionalArray($array)
-    {
-        foreach ($array as $element) {
-            if (is_array($element)) {
-                return true;
+            // Add JOINed tables if present
+            if (preg_match_all('/JOIN\s+([\w]+)\s+/i', $query, $joinMatches)) {
+                $tables = array_merge($tables, $joinMatches[1]);
             }
+
+            // Construct new SELECT part with table.*
+            $selectPart = implode(', ', array_map(fn ($table) => "`$table`.*", $tables));
+            $query = preg_replace('/SELECT\s+\*\s+FROM/i', "SELECT $selectPart FROM", $query, 1);
+        } else if (preg_match('/SELECT\s+(.*)\s+FROM\s+([\w]+)/i', $query, $matches)) {
+            // Scenario 2: SELECT fields FROM table
+            $selectFields = $matches[1];
+            $tables = [$matches[2]];
+
+            // Add JOINed tables if present
+            if (preg_match_all('/JOIN\s+([\w]+)\s+/i', $query, $joinMatches)) {
+                $tables = array_merge($tables, $joinMatches[1]);
+            }
+
+            // Add .* only for tables not in select fields
+            foreach ($tables as $table) {
+                if (!preg_match("/\b$table\.\*/", $selectFields)) {
+                    $selectFields .= ", $table.*";
+                }
+            }
+
+            $query = preg_replace('/SELECT\s+(.*)\s+FROM/i', "SELECT $selectFields FROM", $query, 1);
         }
-        return false;
+
+        return $query;
     }
 
     /**
-     * Check if a value represents a SQL subquery.
+     * Logs database errors and throws an exception.
      *
-     * @param string $value The value to check.
-     * @return bool True if the value is a SQL subquery, false otherwise.
-     */
-    private function isSqlSubquery($value)
-    {
-        if (is_string($value) && !empty($value)) {
-            // Regular expression pattern to match SQL subquery syntax
-            $pattern = '/\b(?:SELECT|INSERT|UPDATE|DELETE)\b.*?\bFROM\b/';
-
-            // Check if the pattern matches the value
-            return preg_match($pattern, $value) === 1;
-        }
-
-        return false;
-    }
-
-    /**
-     * Get the primary key column name for a given table.
+     * This function handles database errors by logging the error message and code,
+     * and then throws a new exception with the details.
      *
-     * @param string $table The name of the table.
-     * @return string|null The name of the primary key column, or null if not found.
+     * @param \Exception $e The exception object representing the database error.
+     * @param string $function (optional) The name of the function where the error occurred.
+     * @param string $customMessage (optional) The description of error.
+     * @throws \Exception A new exception with details from the database error.
      */
-    public function getPrimaryKeyColumn($table)
+    private function db_error_log(\Exception $e, $function = '', $customMessage = 'Error executing')
     {
-        switch ($this->driver) {
-            case 'mysql':
-                // Query the information schema to get the primary key column
-                $sql = "SELECT COLUMN_NAME
-                FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
-                WHERE TABLE_NAME = :table
-                AND CONSTRAINT_NAME = 'PRIMARY'
-                AND TABLE_SCHEMA = :schema";
-                break;
+        try {
+            // Log the error message and code
+            $this->_error = [
+                'code' => (int) $e->getCode(),
+                'message' => "$customMessage '{$function}()': " . $e->getMessage(),
+            ];
 
-            case 'mssql':
-                // Query to get the primary key column name for MSSQL
-                $sql = "SELECT COLUMN_NAME 
-                FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE 
-                WHERE OBJECTPROPERTY(OBJECT_ID(CONSTRAINT_SCHEMA + '.' + CONSTRAINT_NAME), 'IsPrimaryKey') = 1 
-                AND TABLE_NAME = :table
-                AND TABLE_SCHEMA = :schema";
-                break;
+            log_message('error', "db->{$function}() : " . $e->getMessage());
 
-            case 'oracle':
-                // Query to get the primary key column name for Oracle
-                $sql = "SELECT cols.column_name
-                FROM all_constraints cons, all_cons_columns cols
-                WHERE cons.constraint_type = 'P'
-                AND cons.constraint_name = cols.constraint_name
-                AND cons.owner = cols.owner
-                AND cols.table_name = :table
-                AND cols.owner = :schema";
-                break;
-
-            case 'firebird':
-                // Query to get the primary key column name for Firebird
-                $sql = "SELECT TRIM(rdb\$index_segments.rdb\$field_name) AS column_name
-                FROM rdb\$indices
-                LEFT JOIN rdb\$index_segments ON rdb\$indices.rdb\$index_name = rdb\$index_segments.rdb\$index_name
-                WHERE rdb\$indices.rdb\$relation_name = :table
-                AND rdb\$indices.rdb\$unique_flag IS NOT NULL
-                AND rdb\$indices.rdb\$relation_name = :schema";
-                break;
-
-            default:
-                throw new \PDOException('Unsupported database driver', 404);
+            // Throw a new exception with formatted message and code
+            throw new \Exception("$customMessage '{$function}()': " . $e->getMessage(), (int) $e->getCode());
+        } catch (\Exception $e) {
+            throw new \Exception('Database error occurred.', 0, $e);
         }
-
-        // Prepare and execute the SQL statement
-        $stmt = $this->pdo[$this->connectionName]->prepare($sql);
-        $stmt->execute([':table' => $table, ':schema' => $this->schema]);
-
-        // Fetch the primary key column name
-        $primaryKeyColumn = $stmt->fetchColumn();
-
-        return $primaryKeyColumn ?: null;
-    }
-
-    /**
-     * Get all columns information for a given table.
-     *
-     * @param string $table The name of the table.
-     * @return array|null An array containing information about all columns of the table, or null if the table doesn't exist.
-     */
-    public function getTableColumn($table)
-    {
-        switch ($this->driver) {
-            case 'mysql':
-                // Query the information schema to get column information
-                $sql = "SELECT COLUMN_NAME, IS_NULLABLE, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH
-                FROM INFORMATION_SCHEMA.COLUMNS
-                WHERE TABLE_NAME = :table AND TABLE_SCHEMA = :schema";
-                break;
-
-            case 'mssql':
-                // Query to get column information for MSSQL
-                $sql = "SELECT COLUMN_NAME, IS_NULLABLE, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH
-                FROM INFORMATION_SCHEMA.COLUMNS
-                WHERE TABLE_NAME = :table AND TABLE_SCHEMA = :schema";
-                break;
-
-            case 'oracle':
-                // Query to get column information for Oracle
-                $sql = "SELECT column_name, nullable, data_type, data_length
-                FROM all_tab_columns
-                WHERE table_name = :table AND owner = :schema";
-                break;
-
-            case 'firebird':
-                // Query to get column information for Firebird
-                $sql = "SELECT rdb\$fields.rdb\$field_name AS column_name, rdb\$fields.rdb\$null_flag AS is_nullable,
-                rdb\$fields.rdb\$field_type_name AS data_type
-                FROM rdb\$relation_fields
-                WHERE rdb\$relation_fields.rdb\$relation_name = :table AND rdb\$relation_fields.rdb\$relation_schema = :schema";
-                break;
-
-            default:
-                throw new \PDOException('Unsupported database driver', 404);
-        }
-
-        // Prepare and execute the SQL statement
-        $stmt = $this->pdo[$this->connectionName]->prepare($sql);
-        $stmt->execute([':table' => $table, ':schema' => $this->schema]);
-
-        // Fetch all column information
-        $columns = $stmt->fetchAll(\PDO::FETCH_ASSOC);
-
-        return $columns ?: null;
     }
 }
