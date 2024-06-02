@@ -417,6 +417,7 @@ class Database
         $this->_secure = true;
         $this->_binds = [];
         $this->_query = [];
+        $this->relations = [];
 
         return $this;
     }
@@ -721,7 +722,7 @@ class Database
             throw new \InvalidArgumentException('Invalid column names or table name provided.');
         }
 
-        $validJoinTypes = ['LEFT', 'RIGHT', 'INNER'];
+        $validJoinTypes = ['INNER', 'LEFT', 'RIGHT', 'OUTER', 'LEFT OUTER', 'RIGHT OUTER', 'NATURAL'];
         if (!in_array(strtoupper($joinType), $validJoinTypes)) {
             throw new \InvalidArgumentException('Invalid join type. Valid types are: ' . implode(', ', $validJoinTypes));
         }
@@ -733,6 +734,38 @@ class Database
         // Build the join clause
         $this->joins .= " $joinType JOIN `$tableToJoin` ON `$tableToJoin`.`$columnInTableJoin` = `$this->table`.`$columnInTableRefer`";
 
+        return $this;
+    }
+
+    /**
+     * Specify eager loading for a relationship using 'get' type.
+     *
+     * @param string $alias The alias for the relationship.
+     * @param string $table The related table name.
+     * @param string $fk_id The foreign key column in the related table.
+     * @param string $pk_id The primary key column in the current table.
+     * @param Closure|null $callback An optional callback to customize the eager load.
+     * @return $this
+     */
+    public function with($alias, $table, $fk_id, $pk_id, \Closure $callback = null)
+    {
+        $this->relations[$alias] = ['type' => 'get', 'details' => compact('table', 'fk_id', 'pk_id', 'callback')];
+        return $this;
+    }
+
+    /**
+     * Specify eager loading for a relationship using 'fetch' type.
+     *
+     * @param string $alias The alias for the relationship.
+     * @param string $table The related table name.
+     * @param string $fk_id The foreign key column in the related table.
+     * @param string $pk_id The primary key column in the current table.
+     * @param Closure|null $callback An optional callback to customize the eager load.
+     * @return $this
+     */
+    public function withOne($alias, $table, $fk_id, $pk_id, \Closure $callback = null)
+    {
+        $this->relations[$alias] = ['type' => 'fetch', 'details' => compact('table', 'fk_id', 'pk_id', 'callback')];
         return $this;
     }
 
@@ -823,10 +856,6 @@ class Database
 
             // Fetch all results as associative arrays
             $result = $stmt->fetchAll(\PDO::FETCH_ASSOC);
-
-            // Process eager loading if implemented 
-            // $result = $this->_processEagerLoading($result);
-
         } catch (\PDOException $e) {
             // Log database errors
             $this->db_error_log($e, __FUNCTION__);
@@ -836,8 +865,19 @@ class Database
         // Stop profiler 
         $this->_stopProfiler();
 
+        // Save connection name and relations temporarily
+        $_temp_connection = $this->connectionName;
+        $_temp_relations = $this->relations;
+
         // Reset internal properties for next query
         $this->reset();
+
+        // Process eager loading if implemented 
+        if (!empty($result) && !empty($_temp_relations)) {
+            $result = $this->_processEagerLoading($result, $_temp_relations, $_temp_connection, 'get');
+        } else {
+            $_temp_connection = $_temp_relations = NULL;
+        }
 
         return $result;
     }
@@ -883,10 +923,6 @@ class Database
 
             // Fetch only the first result as an associative array
             $result = $stmt->fetch(\PDO::FETCH_ASSOC);
-
-            // Process eager loading if implemented 
-            // $result = $this->_processEagerLoading($result);
-
         } catch (\PDOException $e) {
             // Log database errors
             $this->db_error_log($e, __FUNCTION__);
@@ -896,8 +932,19 @@ class Database
         // Stop profiler
         $this->_stopProfiler();
 
+        // Save connection name and relations temporarily
+        $_temp_connection = $this->connectionName;
+        $_temp_relations = $this->relations;
+
         // Reset internal properties for next query
         $this->reset();
+
+        // Process eager loading if implemented 
+        if (!empty($result) && !empty($_temp_relations)) {
+            $result = $this->_processEagerLoading($result, $_temp_relations, $_temp_connection, 'fetch');
+        } else {
+            $_temp_connection = $_temp_relations = NULL;
+        }
 
         // Return the first result or null if not found
         return $result;
@@ -1066,6 +1113,129 @@ class Database
         return $this;
     }
 
+    # EAGER LOADER SECTION
+
+    /**
+     * Load relations and attach them to the main data efficiently.
+     *
+     * @param array $data The result for the main query/subquery.
+     * @param array $relations The relations to be loaded.
+     * @param string $connectionName The database connection name.
+     * @param string $typeFetch The fetch type ('fetch' or 'get').
+     */
+    private function _processEagerLoading(&$data, $relations, $connectionName, $typeFetch)
+    {
+        $data = $typeFetch == 'fetch' ? [$data] : $data;
+        $connectionObj = Database::$_instance->connection($connectionName);
+
+        foreach ($relations as $alias => $eager) {
+
+            $method = $eager['type']; // Get the type (get or fetch)
+            $config = $eager['details']; // Get the configuration details
+
+            $table = $config['table']; // Table name of the related data
+            $fk_id = $config['fk_id']; // Foreign key column in the related table
+            $pk_id = $config['pk_id']; // Primary key column in the current table
+            $callback = $config['callback']; // Optional callback for customizing the query
+
+            // Extract all primary keys from the main result set
+            $primaryKeys = array_values(array_unique(array_column($data, $pk_id), SORT_REGULAR));
+
+            // Check if batch processing is needed
+            $batchSize = 10000; // Adjust this threshold as needed
+            if (count($primaryKeys) > $batchSize) {
+                $this->_processEagerLoadingInBatches($data, $primaryKeys, $batchSize, $table, $fk_id, $pk_id, $connectionName, $method, $alias, $callback);
+            } else {
+                // Fetch related records using a single query
+                $relatedRecordsQuery = $connectionObj->table($table)->whereIn($fk_id, $primaryKeys);
+
+                // Apply callback if provided for customization
+                if ($callback instanceof \Closure) {
+                    $callback($relatedRecordsQuery);
+                }
+
+                // Fetch data 
+                $relatedRecords = $relatedRecordsQuery->get();
+
+                // Logic to process and attach data to main/subquery data
+                $this->attachEagerLoadedData($method, $data, $relatedRecords, $alias, $fk_id, $pk_id);
+            }
+        }
+
+        return $typeFetch == 'fetch' ? $data[0] : $data;
+    }
+
+    /**
+     * Process eager loading for a large dataset in batches.
+     *
+     * This function splits the primary keys into chunks and fetches related
+     * data for each chunk in separate queries.
+     *
+     * @param array $data The main result data.
+     * @param array $primaryKeys The array of primary keys from the main data.
+     * @param int $batchSize The maximum number of primary keys per batch.
+     * @param string $table The related table name.
+     * @param string $fk_id The foreign key column in the related table.
+     * @param string $pk_id The local key column in the current table.
+     * @param string $connectionName The database connection name.
+     * @param string $method The method type ('get' or 'fetch').
+     * @param string $alias The alias for the relationship.
+     * @param Closure|null $callback An optional callback to customize the query.
+     */
+    private function _processEagerLoadingInBatches(&$data, $primaryKeys, $batchSize, $table, $fk_id, $pk_id, $connectionName, $method, $alias, \Closure $callback = null)
+    {
+        $connectionObj = Database::$_instance->connection($connectionName);
+
+        $chunks = array_chunk($primaryKeys, $batchSize);
+
+        // Initialize an empty array to store all related records
+        $allRelatedRecords = [];
+
+        foreach ($chunks as $chunk) {
+            $relatedRecordsQuery = $connectionObj->table($table)->whereIn($fk_id, $chunk);
+
+            // Apply callback if provided for customization
+            if ($callback instanceof \Closure) {
+                $callback($relatedRecordsQuery);
+            }
+
+            // Fetch data 
+            $chunkRelatedRecords = $relatedRecordsQuery->get();
+
+            // Merge chunk results into the allRelatedRecords array
+            $allRelatedRecords = array_merge($allRelatedRecords, $chunkRelatedRecords);
+        }
+
+        // Attach related data to the main data
+        $this->attachEagerLoadedData($method, $data, $allRelatedRecords, $alias, $fk_id, $pk_id);
+    }
+
+    /**
+     * Helper function to attach related data to the main result set.
+     *
+     * @param string $method The method type ('get' or 'fetch').
+     * @param array $data The result for the main query/subquery.
+     * @param array $relatedRecords The fetched related data.
+     * @param string $alias The alias for the relationship.
+     * @param string $fk_id The foreign key column in the related table.
+     * @param string $pk_id The local key column in the current table.
+     */
+    private function attachEagerLoadedData($method, &$data, &$relatedRecords, $alias, $fk_id, $pk_id)
+    {
+        // Organize related records by foreign key using an associative array
+        $relatedMap = [];
+        foreach ($relatedRecords as $relatedRow) {
+            $relatedMap[$relatedRow[$fk_id]][] = $relatedRow;
+        }
+
+        // Attach related data to the main data set
+        foreach ($data as &$row) {
+            $row[$alias] = $method === 'fetch' && isset($relatedMap[$row[$pk_id]])
+                ? $relatedMap[$row[$pk_id]][0]
+                : ($relatedMap[$row[$pk_id]] ?? []);
+        }
+    }
+
     # PROFILER SECTION
 
     /**
@@ -1096,13 +1266,15 @@ class Database
         $this->_profiler = [
             'method' => $method,
             'start' => $startTime,
-            'start_formatted' => date('Y-m-d H:i:s', (int) $startTime) . sprintf(".%02d", ($startTime - (int)$startTime) * 100),
-            'query' => null, // Placeholder for query string
-            'binds' => null,  // Placeholder for bound parameters
-            'end' => null,    // Placeholder for end time
-            'end_formatted' => null,  // Placeholder for formatted end time
-            'execution_time' => null,  // Placeholder for execution time
-            'status' => null,        // Placeholder for execution status
+            'start_formatted' => date('Y-m-d h:i A', (int) $startTime),
+            'query' => null,
+            'binds' => null,
+            'end' => null,
+            'end_formatted' => null,
+            'execution_time' => null,
+            'status' => null,
+            'memory_usage' => memory_get_usage(),
+            'memory_usage_peak' => memory_get_peak_usage()
         ];
     }
 
@@ -1118,8 +1290,11 @@ class Database
         $endTime = microtime(true);
         $executionTime = $endTime - $this->_profiler['start'];
 
+        $this->_profiler['memory_usage'] = $this->_formatBytes(memory_get_usage() - $this->_profiler['memory_usage'], 2);
+        $this->_profiler['memory_usage_peak'] = $this->_formatBytes(memory_get_peak_usage() - $this->_profiler['memory_usage_peak'], 4);
+
         $this->_profiler['end'] = $endTime;
-        $this->_profiler['end_formatted'] = date('Y-m-d H:i:s', (int) $endTime) . sprintf(".%02d", ($endTime - (int) $endTime) * 100);
+        $this->_profiler['end_formatted'] = date('Y-m-d h:i A', (int) $endTime);
 
         // Calculate and format execution time with milliseconds
         $milliseconds = round(($executionTime - floor($executionTime)) * 1000, 2);
@@ -1142,7 +1317,7 @@ class Database
         $this->_profiler['execution_time'] = $formattedExecutionTime;
 
         // Set execution status based on predefined thresholds
-        $this->_profiler['status'] = ($executionTime > 4) ? 'very slow' : (($executionTime > 1.5 && $executionTime <= 3.59) ? 'slow' : (($executionTime > 0.5 && $executionTime <= 1.49) ? 'fast' : 'very fast'));
+        $this->_profiler['status'] = ($executionTime >= 3.5) ? 'very slow' : (($executionTime >= 1.5 && $executionTime < 3.5) ? 'slow' : (($executionTime > 0.5 && $executionTime < 1.49) ? 'fast' : 'very fast'));
     }
 
     # HELPER SECTION
@@ -1318,5 +1493,29 @@ class Database
         } catch (\Exception $e) {
             throw new \Exception('Database error occurred.', 0, $e);
         }
+    }
+
+    /**
+     * Formats a number of bytes into a human-readable string with units.
+     *
+     * This function takes a number of bytes and converts it to a human-readable
+     * format with appropriate units (B, KB, MB, GB, TB). It uses a specified
+     * precision for rounding the value.
+     *
+     * @param int $bytes The number of bytes to format.
+     * @param int $precision (optional) The number of decimal places to round to. Defaults to 2.
+     * @return string The formatted string with units (e.g., 1023.45 KB).
+     */
+    private function _formatBytes($bytes, $precision = 2)
+    {
+        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+
+        $bytes = max($bytes, 0); // Ensure non-negative bytes
+        $pow = floor(($bytes ? log($bytes) : 0) / log(1024)); // Calculate power of 1024
+        $pow = min($pow, count($units) - 1); // Limit to valid unit index
+
+        $bytes /= (1 << (10 * $pow)); // Divide by appropriate factor
+
+        return round($bytes, $precision) . ' ' . $units[$pow];
     }
 }
