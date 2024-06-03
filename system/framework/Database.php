@@ -126,7 +126,7 @@ class Database
      */
     public function __construct($driver = 'mysql', $host = null, $username = null, $password = null, $database = null, $port = null, $charset = 'utf8mb4', $socket = null)
     {
-        if (!in_array($driver, ['mysql', 'mssql', 'oracle', 'firebird'])) {
+        if (!in_array($driver, ['mysql', 'mssql', 'oracle', 'oci', 'firebird', 'fdb'])) {
             throw new \InvalidArgumentException("Invalid database driver '{$driver}' provided.");
         }
 
@@ -372,9 +372,11 @@ class Database
                     $query = "IF EXISTS (SELECT * FROM sysobjects WHERE name = '$table' AND xtype = 'U') SELECT 1";
                     break;
                 case 'oracle':
+                case 'oci':
                     $query = "SELECT table_name FROM user_tables WHERE table_name = '$table'";
                     break;
                 case 'firebird':
+                case 'fdb':
                     $query = "SELECT RDB\$RELATION_NAME FROM RDB\$RELATIONS WHERE RDB\$RELATION_NAME = '$table'";
                     break;
                 default:
@@ -703,26 +705,109 @@ class Database
     }
 
     /**
+     * Adds an IS NULL condition to the WHERE clause.
+     *
+     * This method checks if the specified column is NULL in the database.
+     *
+     * @param string $column The name of the column to check.
+     * @param string $whereType (optional) The type of WHERE clause (AND or OR). Defaults to AND.
+     * @return $this This object for method chaining.
+     */
+    public function whereIsNull($column, $whereType = 'AND')
+    {
+        try {
+            // Validate column name type
+            if (!is_string($column)) {
+                throw new \InvalidArgumentException('Invalid column name. Must be a string.');
+            }
+
+            $this->_buildWhereClause($column, null, 'IS NULL', $whereType);
+            return $this;
+        } catch (\InvalidArgumentException $e) {
+            $this->db_error_log($e, __FUNCTION__);
+        }
+    }
+
+    /**
+     * Adds an IS NOT NULL condition to the WHERE clause.
+     *
+     * This method checks if the specified column is NOT NULL in the database.
+     *
+     * @param string $column The name of the column to check.
+     * @param string $whereType (optional) The type of WHERE clause (AND or OR). Defaults to AND.
+     * @return $this This object for method chaining.
+     */
+    public function whereIsNotNull($column, $whereType = 'AND')
+    {
+        try {
+            // Validate column name type
+            if (!is_string($column)) {
+                throw new \InvalidArgumentException('Invalid column name. Must be a string.');
+            }
+
+            $this->_buildWhereClause($column, null, 'IS NOT NULL', $whereType);
+            return $this;
+        } catch (\InvalidArgumentException $e) {
+            $this->db_error_log($e, __FUNCTION__);
+        }
+    }
+
+    /**
+     * Adds a where clause to search within a JSON column.
+     *
+     * @param string $columnName The name of the JSON column.
+     * @param string $jsonPath The JSON path to search within.
+     * @param mixed $value The value to search for.
+     * @return $this
+     */
+    public function whereJsonContains($columnName, $jsonPath, $value)
+    {
+        // Check if the column is not null
+        $this->whereIsNotNull($columnName);
+
+        // Construct the JSON search condition based on the driver
+        switch ($this->driver) {
+            case 'mysql':
+                $jsonCondition = "JSON_CONTAINS($columnName, '" . json_encode([$jsonPath => $value]) . "', '$')";
+                break;
+            case 'mssql':
+                $jsonCondition = "JSON_VALUE($columnName, '$.\"$jsonPath\"') = '$value'";
+                break;
+            case 'oracle':
+                // Oracle specific JSON path querying using JSON_EXISTS
+                $jsonCondition = "JSON_EXISTS($columnName, 'strict $.$jsonPath?(@ == \"$value\")')";
+                break;
+            default:
+                throw new \Exception("Unsupported database driver: $this->driver");
+        }
+
+        // Add the condition to the query builder
+        $this->where($jsonCondition, null, 'JSON');
+
+        return $this;
+    }
+
+    /**
      * Performs a join operation on the current query.
      *
      * This function allows you to join another table to the current query
      * based on specified columns and a join type.
      *
      * @param string $tableToJoin The name of the table to join.
-     * @param string $columnInTableJoin The column name in the joined table.
-     * @param string $columnInTableRefer The column name in the current table for reference.
+     * @param string $foreign_key The column name in the joined table.
+     * @param string $local_key The column name in the current table for reference.
      * @param string $joinType (optional) The type of join (e.g., 'LEFT', 'RIGHT', 'INNER'). Defaults to 'LEFT'.
      * @throws \InvalidArgumentException If any of the column names or join type are invalid.
      * @return $this This object for method chaining.
      */
-    public function join($tableToJoin, $columnInTableJoin, $columnInTableRefer, $joinType = 'LEFT')
+    public function join($tableToJoin, $foreign_key, $local_key, $joinType = 'LEFT')
     {
         // Validate input parameters
-        if (!is_string($tableToJoin) || !is_string($columnInTableJoin) || !is_string($columnInTableRefer)) {
+        if (!is_string($tableToJoin) || !is_string($foreign_key) || !is_string($local_key)) {
             throw new \InvalidArgumentException('Invalid column names or table name provided.');
         }
 
-        $validJoinTypes = ['INNER', 'LEFT', 'RIGHT', 'OUTER', 'LEFT OUTER', 'RIGHT OUTER', 'NATURAL'];
+        $validJoinTypes = ['INNER', 'LEFT', 'RIGHT', 'OUTER', 'LEFT OUTER', 'RIGHT OUTER'];
         if (!in_array(strtoupper($joinType), $validJoinTypes)) {
             throw new \InvalidArgumentException('Invalid join type. Valid types are: ' . implode(', ', $validJoinTypes));
         }
@@ -732,7 +817,72 @@ class Database
         }
 
         // Build the join clause
-        $this->joins .= " $joinType JOIN `$tableToJoin` ON `$tableToJoin`.`$columnInTableJoin` = `$this->table`.`$columnInTableRefer`";
+        $this->joins .= " $joinType JOIN `$tableToJoin` ON `$tableToJoin`.`$foreign_key` = `$this->table`.`$local_key`";
+
+        return $this;
+    }
+
+    /**
+     * Set the order by columns and directions.
+     *
+     * @param string|array $columns The order by columns.
+     * @param string $direction The order direction.
+     * @return $this
+     * @throws \InvalidArgumentException If the $direction parameter is not "ASC" or "DESC".
+     */
+    public function orderBy($columns, $direction = 'DESC')
+    {
+        // Check if direction is valid
+        if (!in_array(strtoupper($direction), ['ASC', 'DESC'])) {
+            throw new \InvalidArgumentException('Order direction must be "ASC" or "DESC".');
+        }
+
+        if (is_array($columns)) {
+            $orderBy = [];
+            foreach ($columns as $column => $dir) {
+                $direction = strtoupper(!in_array(strtoupper($dir), ['ASC', 'DESC']) ? 'DESC' : $dir); // Set default to DESC if is not match 
+                $orderBy[] = "$column $direction";
+            }
+            $this->orderBy = implode(', ', $orderBy);
+        } else {
+            $this->orderBy = "$columns $direction";
+        }
+
+        return $this;
+    }
+
+    /**
+     * Sets the GROUP BY clause for the query.
+     *
+     * This function allows you to specify one or more columns to group the results by.
+     *
+     * @param mixed $columns The column name(s) to group by. Can be a single string or an array of column names.
+     * @throws \InvalidArgumentException If an invalid column name is provided.
+     * @return $this This object for method chaining.
+     */
+    public function groupBy($columns)
+    {
+        if (is_string($columns)) {
+            // Validate column name, Allow commas for multiple columns
+            if (!preg_match('/^[a-zA-Z0-9._, ]+$/', $columns)) {
+                throw new \InvalidArgumentException('Invalid column name(s) for groupBy.');
+            }
+            $this->groupBy = "$columns";
+        } else if (is_array($columns)) {
+
+            $groupBy = [];
+            foreach ($columns as $column) {
+                // Validate column name
+                if (!preg_match('/^[a-zA-Z0-9._]+$/', $column)) {
+                    throw new \InvalidArgumentException('Invalid column name in groupBy array.');
+                }
+                $groupBy[] = "`$column`";
+            }
+
+            $this->groupBy = implode(', ', $groupBy);
+        } else {
+            throw new \InvalidArgumentException('groupBy expects a string or an array of column names.');
+        }
 
         return $this;
     }
@@ -742,14 +892,14 @@ class Database
      *
      * @param string $alias The alias for the relationship.
      * @param string $table The related table name.
-     * @param string $fk_id The foreign key column in the related table.
-     * @param string $pk_id The primary key column in the current table.
+     * @param string $foreign_key The foreign key column in the related table.
+     * @param string $local_key The local key column in the current table.
      * @param Closure|null $callback An optional callback to customize the eager load.
      * @return $this
      */
-    public function with($alias, $table, $fk_id, $pk_id, \Closure $callback = null)
+    public function with($alias, $table, $foreign_key, $local_key, \Closure $callback = null)
     {
-        $this->relations[$alias] = ['type' => 'get', 'details' => compact('table', 'fk_id', 'pk_id', 'callback')];
+        $this->relations[$alias] = ['type' => 'get', 'details' => compact('table', 'foreign_key', 'local_key', 'callback')];
         return $this;
     }
 
@@ -758,64 +908,15 @@ class Database
      *
      * @param string $alias The alias for the relationship.
      * @param string $table The related table name.
-     * @param string $fk_id The foreign key column in the related table.
-     * @param string $pk_id The primary key column in the current table.
+     * @param string $foreign_key The foreign key column in the related table.
+     * @param string $local_key The local key column in the current table.
      * @param Closure|null $callback An optional callback to customize the eager load.
      * @return $this
      */
-    public function withOne($alias, $table, $fk_id, $pk_id, \Closure $callback = null)
+    public function withOne($alias, $table, $foreign_key, $local_key, \Closure $callback = null)
     {
-        $this->relations[$alias] = ['type' => 'fetch', 'details' => compact('table', 'fk_id', 'pk_id', 'callback')];
+        $this->relations[$alias] = ['type' => 'fetch', 'details' => compact('table', 'foreign_key', 'local_key', 'callback')];
         return $this;
-    }
-
-    /**
-     * Builds a WHERE clause fragment based on provided conditions.
-     *
-     * This function is used internally to construct WHERE clause parts based on
-     * column name, operator, value(s), and WHERE type (AND or OR). It handles
-     * different operators like `=`, `IN`, `NOT IN`, `BETWEEN`, and `NOT BETWEEN`.
-     * It uses placeholders (`?`) for values and builds the appropriate clause structure.
-     * This function also merges the provided values into the internal `_binds` array
-     * for later binding to the prepared statement.
-     *
-     * @param string $columnName The name of the column to compare.
-     * @param mixed $value The value or an array of values for the comparison.
-     * @param string $operator (optional) The comparison operator (e.g., =, IN, BETWEEN). Defaults to =.
-     * @param string $whereType (optional) The type of WHERE clause (AND or OR). Defaults to AND.
-     * @throws \InvalidArgumentException If invalid operator or value format is provided.
-     */
-    private function _buildWhereClause($columnName, $value, $operator = '=', $whereType = 'AND')
-    {
-        if (!isset($this->where)) {
-            $this->where = "";
-        } else {
-            $this->where .= " $whereType ";
-        }
-
-        $placeholder = '?'; // Use a single placeholder for all conditions
-
-        switch ($operator) {
-            case 'IN':
-            case 'NOT IN':
-                if (!is_array($value)) {
-                    throw new \InvalidArgumentException('Value for IN or NOT IN operator must be an array');
-                }
-                $this->where .= "$columnName $operator (" . implode(',', array_fill(0, count($value), $placeholder)) . ")";
-                $this->_binds = array_merge($this->_binds, $value);
-                break;
-            case 'BETWEEN':
-            case 'NOT BETWEEN':
-                if (!is_array($value) || count($value) !== 2) {
-                    throw new \InvalidArgumentException("Value for 'BETWEEN' or 'NOT BETWEEN' operator must be an array with two elements (start and end)");
-                }
-                $this->where .= "($columnName $operator $placeholder AND $placeholder)";
-                $this->_binds = array_merge($this->_binds, $value);
-                break;
-            default:
-                $this->where .= "$columnName $operator $placeholder";
-                $this->_binds[] = $value;
-        }
     }
 
     /**
@@ -875,9 +976,9 @@ class Database
         // Process eager loading if implemented 
         if (!empty($result) && !empty($_temp_relations)) {
             $result = $this->_processEagerLoading($result, $_temp_relations, $_temp_connection, 'get');
-        } else {
-            $_temp_connection = $_temp_relations = NULL;
         }
+
+        $_temp_connection = $_temp_relations = NULL;
 
         return $result;
     }
@@ -942,12 +1043,212 @@ class Database
         // Process eager loading if implemented 
         if (!empty($result) && !empty($_temp_relations)) {
             $result = $this->_processEagerLoading($result, $_temp_relations, $_temp_connection, 'fetch');
-        } else {
-            $_temp_connection = $_temp_relations = NULL;
         }
+
+        $_temp_connection = $_temp_relations = NULL;
 
         // Return the first result or null if not found
         return $result;
+    }
+
+    /**
+     * Retrieves and paginates the results of a query.
+     * 
+     * This method fetches data from the database and applies pagination based on the provided parameters.
+     * 
+     * @param int $currentPage (optional) The current page number (defaults to 1).
+     * @param int $limit (optional) The number of records to retrieve per page (defaults to 10).
+     * @param int $draw (optional) An identifier used for request tracking in server-side processing (defaults to 1).
+     * @return array The paginated query results as an array.
+     * @throws \Exception If there's an error accessing the database or if the table does not exist.
+     */
+    public function paginate($currentPage = 1, $limit = 10, $draw = 1)
+    {
+        // Build the final SELECT query string
+        $this->_buildSelectQuery();
+
+        // Start profiler for performance measurement 
+        $this->_startProfiler(__FUNCTION__);
+
+        try {
+
+            // Calculate offset
+            $offset = ($currentPage - 1) * $limit;
+
+            // Create a separate query to get total count
+            switch ($this->driver) {
+                case 'mysql':
+                case 'pgsql':
+                    $sqlTotal = 'SELECT COUNT(*) count ' . substr($this->_query, strpos($this->_query, 'FROM'));
+                    break;
+                case 'mssql':
+                    $sqlTotal = 'SELECT COUNT(*) count FROM (' . $this->_query . ') AS subquery';
+                    break;
+                case 'oracle':
+                case 'oci':
+                    $sqlTotal = 'SELECT COUNT(*) count FROM (' . $this->_query . ')';
+                    break;
+                default:
+                    throw new \Exception('Unsupported database driver for paginate()');
+            }
+
+            // Execute the total count query
+            $stmtTotal = $this->pdo[$this->connectionName]->prepare($sqlTotal);
+
+            // Bind parameters if any
+            if (!empty($this->_binds)) {
+                $this->_bindParams($stmtTotal, $this->_binds);
+            }
+
+            $stmtTotal->execute();
+            $totalResult = $stmtTotal->fetch(\PDO::FETCH_ASSOC);
+
+            // Get total count
+            $total = $totalResult['count'];
+
+            // Calculate total pages
+            $totalPages = ceil($total / $limit);
+
+            // Add LIMIT and OFFSET clauses to the main query
+            switch ($this->driver) {
+                case 'mysql':
+                    $this->_query .= ' LIMIT ' . $limit . ' OFFSET ' . $offset;
+                    break;
+                case 'mssql':
+                    $this->_query = "SELECT * FROM (SELECT *, ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS RowNum FROM (" . $this->_query . ") AS innerQuery) AS outerQuery WHERE RowNum BETWEEN $offset + 1 AND $offset + $limit";
+                    break;
+                case 'oracle':
+                case 'oci':
+                    $this->_query = 'SELECT * FROM (SELECT innerQuery.*, ROWNUM AS rn FROM (' . $this->_query . ') innerQuery WHERE ROWNUM <= ' . ($offset + $limit) . ') WHERE rn > ' . $offset;
+                    break;
+                default:
+                    throw new \Exception('Unsupported database driver for paginate()');
+            }
+
+            // Execute the main query
+            $stmt = $this->pdo[$this->connectionName]->prepare($this->_query);
+
+            // Bind parameters if any
+            if (!empty($this->_binds)) {
+                $this->_bindParams($stmt, $this->_binds);
+            }
+
+            // Log the query for debugging 
+            $this->_profiler['query'] = $this->_query;
+
+            // Generate the full query string with bound values 
+            $this->_generateFullQuery($this->_query, $this->_binds);
+
+            // Execute the prepared statement
+            $stmt->execute();
+
+            // Fetch the result in associative array
+            $result = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+
+            // Calculate next page
+            $nextPage = ($currentPage < $totalPages) ? $currentPage + 1 : null;
+
+            // Calculate previous page
+            $previousPage = ($currentPage > 1) ? $currentPage - 1 : null;
+
+            // Adjust array keys to start from previous count
+            $startIndex = ($currentPage - 1) * $limit;
+
+            if (!empty($result)) {
+                $result = array_combine(range($startIndex, $startIndex + count($result) - 1), $result);
+            }
+
+            $paginate = [
+                'draw' => $draw,
+                'recordsTotal' => $total ?? 0,
+                'recordsFiltered' => count($result) ?? 0,
+                'data' => $result ?? null,
+                'current_page' => $currentPage,
+                'next_page' => $nextPage,
+                'previous_page' => $previousPage,
+                'last_page' => $totalPages,
+                'error' => ''
+            ];
+        } catch (\PDOException $e) {
+            // Log database errors
+            $this->db_error_log($e, __FUNCTION__);
+            throw $e; // Re-throw the exception
+        }
+
+        // Stop profiler 
+        $this->_stopProfiler();
+
+        // Save connection name and relations temporarily
+        $_temp_connection = $this->connectionName;
+        $_temp_relations = $this->relations;
+
+        // Reset internal properties for next query
+        $this->reset();
+
+        // Process eager loading if implemented 
+        if (!empty($paginate['data']) && !empty($_temp_relations)) {
+            $paginate['data'] = $this->_processEagerLoading($paginate['data'], $_temp_relations, $_temp_connection, 'get');
+        }
+
+        $_temp_connection = $_temp_relations = NULL;
+
+        return $paginate;
+    }
+
+    /**
+     * Builds a WHERE clause fragment based on provided conditions.
+     *
+     * This function is used internally to construct WHERE clause parts based on
+     * column name, operator, value(s), and WHERE type (AND or OR). It handles
+     * different operators like `=`, `IN`, `NOT IN`, `BETWEEN`, and `NOT BETWEEN`.
+     * It uses placeholders (`?`) for values and builds the appropriate clause structure.
+     * This function also merges the provided values into the internal `_binds` array
+     * for later binding to the prepared statement.
+     *
+     * @param string $columnName The name of the column to compare.
+     * @param mixed $value The value or an array of values for the comparison.
+     * @param string $operator (optional) The comparison operator (e.g., =, IN, BETWEEN). Defaults to =.
+     * @param string $whereType (optional) The type of WHERE clause (AND or OR). Defaults to AND.
+     * @throws \InvalidArgumentException If invalid operator or value format is provided.
+     */
+    private function _buildWhereClause($columnName, $value = null, $operator = '=', $whereType = 'AND')
+    {
+        if (!isset($this->where)) {
+            $this->where = "";
+        } else {
+            $this->where .= " $whereType ";
+        }
+
+        $placeholder = '?'; // Use a single placeholder for all conditions
+
+        switch ($operator) {
+            case 'IN':
+            case 'NOT IN':
+                if (!is_array($value)) {
+                    throw new \InvalidArgumentException('Value for IN or NOT IN operator must be an array');
+                }
+                $this->where .= "$columnName $operator (" . implode(',', array_fill(0, count($value), $placeholder)) . ")";
+                $this->_binds = array_merge($this->_binds, $value);
+                break;
+            case 'BETWEEN':
+            case 'NOT BETWEEN':
+                if (!is_array($value) || count($value) !== 2) {
+                    throw new \InvalidArgumentException("Value for 'BETWEEN' or 'NOT BETWEEN' operator must be an array with two elements (start and end)");
+                }
+                $this->where .= "($columnName $operator $placeholder AND $placeholder)";
+                $this->_binds = array_merge($this->_binds, $value);
+                break;
+            case 'JSON':
+                $this->where .= "$columnName";
+                break;
+            case 'IS NULL':
+            case 'IS NOT NULL':
+                $this->where .= "$columnName $operator";
+                break;
+            default:
+                $this->where .= "$columnName $operator $placeholder";
+                $this->_binds[] = $value;
+        }
     }
 
     /**
@@ -999,69 +1300,6 @@ class Database
 
         // Expand asterisks in the query (replace with actual column names)
         $this->_query = $this->_expandAsterisksInQuery($this->_query);
-
-        return $this;
-    }
-
-    /**
-     * Set the order by columns and directions.
-     *
-     * @param string|array $columns The order by columns.
-     * @param string $direction The order direction.
-     * @return $this
-     * @throws \InvalidArgumentException If the $direction parameter is not "ASC" or "DESC".
-     */
-    public function orderBy($columns, string $direction = 'ASC')
-    {
-        // Check if direction is valid
-        if (!in_array(strtoupper($direction), ['ASC', 'DESC'])) {
-            throw new \InvalidArgumentException('Order direction must be "ASC" or "DESC".');
-        }
-
-        if (is_array($columns)) {
-            $orderBy = [];
-            foreach ($columns as $column => $dir) {
-                $direction = strtoupper(!in_array(strtoupper($dir), ['ASC', 'DESC']) ? 'DESC' : $dir); // Set default to DESC if is not match 
-                $orderBy[] = "$column $direction";
-            }
-            $this->orderBy = implode(', ', $orderBy);
-        } else {
-            $this->orderBy = "$columns $direction";
-        }
-
-        return $this;
-    }
-
-    /**
-     * Sets the GROUP BY clause for the query.
-     *
-     * This function allows you to specify one or more columns to group the results by.
-     *
-     * @param mixed $columns The column name(s) to group by. Can be a single string or an array of column names.
-     * @throws \InvalidArgumentException If an invalid column name is provided.
-     * @return $this This object for method chaining.
-     */
-    public function groupBy($columns)
-    {
-        if (is_string($columns)) {
-            // Validate column name, Allow commas for multiple columns
-            if (!preg_match('/^[a-zA-Z0-9._, ]+$/', $columns)) {
-                throw new \InvalidArgumentException('Invalid column name(s) for groupBy.');
-            }
-            $this->groupBy = "$columns";
-        } else if (is_array($columns)) {
-            $groupBy = [];
-            foreach ($columns as $column) {
-                // Validate column name
-                if (!preg_match('/^[a-zA-Z0-9._]+$/', $column)) {
-                    throw new \InvalidArgumentException('Invalid column name in groupBy array.');
-                }
-                $groupBy[] = "`$column`";
-            }
-            $this->groupBy = implode(', ', $groupBy);
-        } else {
-            throw new \InvalidArgumentException('groupBy expects a string or an array of column names.');
-        }
 
         return $this;
     }
@@ -1134,8 +1372,8 @@ class Database
             $config = $eager['details']; // Get the configuration details
 
             $table = $config['table']; // Table name of the related data
-            $fk_id = $config['fk_id']; // Foreign key column in the related table
-            $pk_id = $config['pk_id']; // Primary key column in the current table
+            $fk_id = $config['foreign_key']; // Foreign key column in the related table
+            $pk_id = $config['local_key']; // Local key column in the current table
             $callback = $config['callback']; // Optional callback for customizing the query
 
             // Extract all primary keys from the main result set
@@ -1343,6 +1581,10 @@ class Database
         $hasPositional = strpos($query, '?') !== false;
         $hasNamed = preg_match('/:\w+/', $query);
 
+        // Reset
+        $this->_binds = [];
+        $this->_profiler['binds'] = [];
+
         foreach ($binds as $key => $value) {
 
             $type = \PDO::PARAM_STR; // Default type to string
@@ -1517,5 +1759,36 @@ class Database
         $bytes /= (1 << (10 * $pow)); // Divide by appropriate factor
 
         return round($bytes, $precision) . ' ' . $units[$pow];
+    }
+
+    private function generateJsonContainsExpression($keyToSearch, $value)
+    {
+        $parts = explode('.', $keyToSearch);
+
+        $jsonResults = [];
+
+        // Iterate over the parts to construct the nested structure
+        foreach ($parts as $part) {
+            $jsonResults = [$part => $jsonResults];
+        }
+
+        // Assign the value to the innermost key
+        $jsonResults = array_fill_keys(explode('.', $keyToSearch), $value);
+
+        // Encode the JSON string
+        $jsonResult = json_encode($jsonResults);
+
+        return $jsonResult;
+    }
+
+    private function generateJSONsearch($column, $keyWithDots, $valueToSearch) {
+        $jsonKey = str_replace('.', '":"', $keyWithDots);
+        $jsonKey = '{"' . $jsonKey . '"}';
+        $jsonCondition = '{"' . $column . '": ' . $jsonKey . '}';
+    
+        // MySQL query condition using JSON_CONTAINS function
+        $condition = "JSON_CONTAINS($column, '$jsonCondition', '\$.')";
+    
+        return $condition;
     }
 }
