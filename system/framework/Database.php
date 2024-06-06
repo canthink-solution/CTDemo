@@ -713,7 +713,7 @@ class Database
      * @param string $whereType (optional) The type of WHERE clause (AND or OR). Defaults to AND.
      * @return $this This object for method chaining.
      */
-    public function whereIsNull($column, $whereType = 'AND')
+    public function whereNull($column, $whereType = 'AND')
     {
         try {
             // Validate column name type
@@ -737,7 +737,7 @@ class Database
      * @param string $whereType (optional) The type of WHERE clause (AND or OR). Defaults to AND.
      * @return $this This object for method chaining.
      */
-    public function whereIsNotNull($column, $whereType = 'AND')
+    public function whereNotNull($column, $whereType = 'AND')
     {
         try {
             // Validate column name type
@@ -753,6 +753,132 @@ class Database
     }
 
     /**
+     * Adds a date comparison condition to the WHERE clause.
+     *
+     * This function allows you to filter based on specific date parts (year, month, day)
+     * of a column. It converts the provided `$date` to a formatted Y-m-d string and uses
+     * the appropriate database function (YEAR, MONTH, DAY) based on the configured database type.
+     * 
+     * @param string $column The name of the column to compare.
+     * @param string $date The date to compare against (e.g., "2024-06-06").
+     * @param string $operator (optional) The comparison operator (e.g., '=', '<', '>', '<>'). Defaults to '='.
+     * @param string $whereType (optional) The type of WHERE clause (AND or OR). Defaults to AND.
+     * @throws \InvalidArgumentException If the column name is not a string or the date format is invalid.
+     * @return $this This object for method chaining.
+     */
+    public function whereDate($column, $date, $operator = '=', $whereType = 'AND')
+    {
+        try {
+            if (!is_string($column)) {
+                throw new \InvalidArgumentException('Invalid column name. Must be a string.');
+            }
+    
+            $formattedDate = date('Y-m-d', strtotime($date)); // Convert to Y-m-d format
+    
+            $this->_buildWhereClause($this->_getDateFunction($column)['date'], $date, $operator, $whereType);
+            return $this;
+        } catch (\InvalidArgumentException $e) {
+            $this->db_error_log($e, __FUNCTION__);
+        }
+    }
+    
+    /**
+     * Adds a month comparison condition to the WHERE clause.
+     *
+     * This function filters based on the month of the specified column. It validates the
+     * provided `$month` to be a number between 1 and 12 and uses the appropriate database function
+     * (MONTH) based on the configured database type.
+     * 
+     * @param string $column The name of the column to compare.
+     * @param int $month The month number (between 1 and 12).
+     * @param string $operator (optional) The comparison operator (e.g., '=', '<', '>', '<>'). Defaults to '='.
+     * @param string $whereType (optional) The type of WHERE clause (AND or OR). Defaults to AND.
+     * @throws \InvalidArgumentException If the column name is not a string or the month is invalid.
+     * @return $this This object for method chaining.
+     */
+    public function whereMonth($column, $month, $operator = '=', $whereType = 'AND')
+    {
+        try {
+            if (!is_string($column)) {
+                throw new \InvalidArgumentException('Invalid column name. Must be a string.');
+            }
+    
+            if (!is_numeric($month) || $month < 1 || $month > 12) {
+                throw new \InvalidArgumentException('Invalid month. Must be a number between 1 and 12.');
+            }
+    
+            $this->_buildWhereClause($this->_getDateFunction($column)['month'], (int)$month, $operator, $whereType);
+            return $this;
+        } catch (\InvalidArgumentException $e) {
+            $this->db_error_log($e, __FUNCTION__);
+        }
+    }
+    
+    /**
+     * Adds a day comparison condition to the WHERE clause.
+     *
+     * This function filters based on the day of the specified column. It validates the
+     * provided `$day` to be a number between 1 and 31 and uses the appropriate database function
+     * (DAY) based on the configured database type.
+     * 
+     * @param string $column The name of the column to compare.
+     * @param int $day The day number (between 1 and 31).
+     * @param string $operator (optional) The comparison operator (e.g., '=', '<', '>', '<>'). Defaults to '='.
+     * @param string $whereType (optional) The type of WHERE clause (AND or OR). Defaults to AND.
+     * @throws \InvalidArgumentException If the column name is not a string or the day is invalid.
+     * @return $this This object for method chaining.
+     */
+    public function whereDay($column, $day, $operator = '=', $whereType = 'AND')
+    {
+        try {
+            if (!is_string($column)) {
+                throw new \InvalidArgumentException('Invalid column name. Must be a string.');
+            }
+    
+            if (!is_numeric($day) || $day < 1 || $day > 31) {
+                throw new \InvalidArgumentException('Invalid day. Must be a number between 1 and 31.');
+            }
+    
+            $this->_buildWhereClause($this->_getDateFunction($column)['day'], (int)$day, $operator, $whereType);
+            return $this;
+        } catch (\InvalidArgumentException $e) {
+            $this->db_error_log($e, __FUNCTION__);
+        }
+    }
+    
+    /**
+     * Adds a year comparison condition to the WHERE clause.
+     *
+     * This function filters based on the year of the specified column. It validates the
+     * provided `$year` to be a number and uses the appropriate database function
+     * (YEAR) based on the configured database type.
+     * 
+     * @param string $column The name of the column to compare.
+     * @param int $year The year number.
+     * @param string $operator (optional) The comparison operator (e.g., '=', '<', '>', '<>'). Defaults to '='.
+     * @param string $whereType (optional) The type of WHERE clause (AND or OR). Defaults to AND.
+     * @throws \InvalidArgumentException If the column name is not a string or the year is invalid.
+     * @return $this This object for method chaining.
+     */
+    public function whereYear($column, $year, $operator = '=' $whereType = 'AND')
+    {
+        try {
+            if (!is_string($column)) {
+                throw new \InvalidArgumentException('Invalid column name. Must be a string.');
+            }
+    
+            if (!is_numeric($year)) {
+                throw new \InvalidArgumentException('Invalid year. Must be a number.');
+            }
+    
+            $this->_buildWhereClause($this->_getDateFunction($column)['year'], (int)$year, $operator, $whereType);
+            return $this;
+        } catch (\InvalidArgumentException $e) {
+            $this->db_error_log($e, __FUNCTION__);
+        }
+    }
+    
+    /**
      * Adds a where clause to search within a JSON column.
      *
      * @param string $columnName The name of the JSON column.
@@ -763,7 +889,7 @@ class Database
     public function whereJsonContains($columnName, $jsonPath, $value)
     {
         // Check if the column is not null
-        $this->whereIsNotNull($columnName);
+        $this->whereNotNull($columnName);
 
         // Construct the JSON search condition based on the driver
         switch ($this->driver) {
@@ -1759,6 +1885,47 @@ class Database
         $bytes /= (1 << (10 * $pow)); // Divide by appropriate factor
 
         return round($bytes, $precision) . ' ' . $units[$pow];
+    }
+
+    /**
+     * Retrieves the appropriate database function or full date string based on the database type.
+     *
+     * This function helps determine the correct function to use for date comparisons (YEAR, MONTH, DAY)
+     * depending on the configured database type (mysql, mssql, oracle, firebird). It also allows requesting
+     * a full date string by setting the `$getFullDate` parameter to true.
+     *
+     * @param string $column The name of the column (not used for full date string).
+     * @throws \InvalidArgumentException If the database type is not supported.
+     * @return mixed An associative array containing database functions (default) or a full date string.
+     */
+    private function _getDateFunction($column)
+    {
+        switch ($this->driver) {
+            case 'mysql':
+            case 'firebird':
+                return [
+                    "date" => "DATE_FORMAT($column, '%Y-%m-%d')",
+                    "year" => "YEAR($column)",
+                    "month" => "MONTH($column)",
+                    "day" => "DAY($column)",
+                ];
+            case 'mssql':
+                return [
+                    "date" => "CONVERT(VARCHAR(10), $column, 126)",
+                    "year" => "DATEPART(year, $column)",
+                    "month" => "DATEPART(month, $column)",
+                    "day" => "DATEPART(day, $column)",
+                ];
+            case 'oracle':
+                return [
+                    "date" => "TO_CHAR($column, 'YYYY-MM-DD')",
+                    "year" => "EXTRACT(YEAR FROM $column)",
+                    "month" => "EXTRACT(MONTH FROM $column)",
+                    "day" => "EXTRACT(DAY FROM $column)",
+                ];
+            default:
+                throw new \InvalidArgumentException("Unsupported database type: $dbType");
+        }
     }
 
     private function generateJsonContainsExpression($keyToSearch, $value)
