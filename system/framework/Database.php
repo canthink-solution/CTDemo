@@ -475,7 +475,7 @@ class Database
     public function where($columnName, $value = NULL, $operator = '=', $whereType = 'AND')
     {
         try {
-            // Validate input type
+
             if (!is_string($columnName) && !is_array($columnName)) {
                 throw new \InvalidArgumentException('Invalid column name. Must be a string or an associative array.');
             }
@@ -515,7 +515,7 @@ class Database
     public function orWhere($columnName, $value = NULL, $operator = '=', $whereType = 'OR')
     {
         try {
-            // Validate input type
+
             if (!is_string($columnName) && !is_array($columnName)) {
                 throw new \InvalidArgumentException('Invalid column name. Must be a string or an associative array.');
             }
@@ -608,12 +608,11 @@ class Database
     public function whereNotBetween($columnName, $start, $end, $whereType = 'AND')
     {
         try {
-            // Validate column name type
+
             if (!is_string($columnName)) {
                 throw new \InvalidArgumentException('Invalid column name. Must be a string.');
             }
 
-            // Validate and format start and end values
             $formattedValues = [];
             foreach ([$start, $end] as $value) {
                 if (is_int($value) || is_float($value)) {
@@ -657,7 +656,7 @@ class Database
     public function whereIn($column, $value, $whereType = 'AND')
     {
         try {
-            // Validate column name type
+
             if (!is_string($column)) {
                 throw new \InvalidArgumentException('Invalid column name. Must be a string.');
             }
@@ -688,7 +687,7 @@ class Database
     public function whereNotIn($column, $value, $whereType = 'AND')
     {
         try {
-            // Validate column name type
+
             if (!is_string($column)) {
                 throw new \InvalidArgumentException('Invalid column name. Must be a string.');
             }
@@ -716,7 +715,7 @@ class Database
     public function whereNull($column, $whereType = 'AND')
     {
         try {
-            // Validate column name type
+
             if (!is_string($column)) {
                 throw new \InvalidArgumentException('Invalid column name. Must be a string.');
             }
@@ -740,6 +739,7 @@ class Database
     public function whereNotNull($column, $whereType = 'AND')
     {
         try {
+
             // Validate column name type
             if (!is_string($column)) {
                 throw new \InvalidArgumentException('Invalid column name. Must be a string.');
@@ -761,27 +761,41 @@ class Database
      * 
      * @param string $column The name of the column to compare.
      * @param string $date The date to compare against (e.g., "2024-06-06").
-     * @param string $operator (optional) The comparison operator (e.g., '=', '<', '>', '<>'). Defaults to '='.
+     * @param string $operator (optional) The comparison operator (e.g., '=', '<', '>', '<=', '>=', '<>', '!='). Defaults to '='.
      * @param string $whereType (optional) The type of WHERE clause (AND or OR). Defaults to AND.
-     * @throws \InvalidArgumentException If the column name is not a string or the date format is invalid.
+     * @throws \InvalidArgumentException If the column name is not a string, the date format is invalid, or the operator is not supported.
      * @return $this This object for method chaining.
      */
     public function whereDate($column, $date, $operator = '=', $whereType = 'AND')
     {
         try {
+
             if (!is_string($column)) {
                 throw new \InvalidArgumentException('Invalid column name. Must be a string.');
             }
-    
-            $formattedDate = date('Y-m-d', strtotime($date)); // Convert to Y-m-d format
-    
-            $this->_buildWhereClause($this->_getDateFunction($column)['date'], $date, $operator, $whereType);
+
+            // Check if date is valid
+            $timestamp = strtotime($date);
+            if ($timestamp === false) {
+                throw new \InvalidArgumentException('Invalid date format. Date must be in a recognizable format. Suggested format : Y-m-d OR d-m-Y');
+            }
+
+            // Convert to Y-m-d format
+            $formattedDate = date('Y-m-d', $timestamp);
+
+            // Check if operator is supported
+            $supportedOperators = ['=', '<', '>', '<=', '>=', '<>', '!='];
+            if (!in_array($operator, $supportedOperators)) {
+                throw new \InvalidArgumentException('Invalid operator. Supported operators are: ' . implode(', ', $supportedOperators));
+            }
+
+            $this->_buildWhereClause($this->_getDateFunction($column)['date'], $formattedDate, $operator, $whereType);
             return $this;
         } catch (\InvalidArgumentException $e) {
             $this->db_error_log($e, __FUNCTION__);
         }
     }
-    
+
     /**
      * Adds a month comparison condition to the WHERE clause.
      *
@@ -791,7 +805,7 @@ class Database
      * 
      * @param string $column The name of the column to compare.
      * @param int $month The month number (between 1 and 12).
-     * @param string $operator (optional) The comparison operator (e.g., '=', '<', '>', '<>'). Defaults to '='.
+     * @param string $operator (optional) The comparison operator (e.g., '=', '<', '>', '<=', '>=', '<>', '!='). Defaults to '='.
      * @param string $whereType (optional) The type of WHERE clause (AND or OR). Defaults to AND.
      * @throws \InvalidArgumentException If the column name is not a string or the month is invalid.
      * @return $this This object for method chaining.
@@ -799,21 +813,28 @@ class Database
     public function whereMonth($column, $month, $operator = '=', $whereType = 'AND')
     {
         try {
+
             if (!is_string($column)) {
                 throw new \InvalidArgumentException('Invalid column name. Must be a string.');
             }
-    
+
             if (!is_numeric($month) || $month < 1 || $month > 12) {
                 throw new \InvalidArgumentException('Invalid month. Must be a number between 1 and 12.');
             }
-    
+
+            // Check if operator is supported
+            $supportedOperators = ['=', '<', '>', '<=', '>=', '<>', '!='];
+            if (!in_array($operator, $supportedOperators)) {
+                throw new \InvalidArgumentException('Invalid operator. Supported operators are: ' . implode(', ', $supportedOperators));
+            }
+
             $this->_buildWhereClause($this->_getDateFunction($column)['month'], (int)$month, $operator, $whereType);
             return $this;
         } catch (\InvalidArgumentException $e) {
             $this->db_error_log($e, __FUNCTION__);
         }
     }
-    
+
     /**
      * Adds a day comparison condition to the WHERE clause.
      *
@@ -823,7 +844,7 @@ class Database
      * 
      * @param string $column The name of the column to compare.
      * @param int $day The day number (between 1 and 31).
-     * @param string $operator (optional) The comparison operator (e.g., '=', '<', '>', '<>'). Defaults to '='.
+     * @param string $operator (optional) The comparison operator (e.g., '=', '<', '>', '<=', '>=', '<>', '!='). Defaults to '='.
      * @param string $whereType (optional) The type of WHERE clause (AND or OR). Defaults to AND.
      * @throws \InvalidArgumentException If the column name is not a string or the day is invalid.
      * @return $this This object for method chaining.
@@ -834,18 +855,24 @@ class Database
             if (!is_string($column)) {
                 throw new \InvalidArgumentException('Invalid column name. Must be a string.');
             }
-    
+
             if (!is_numeric($day) || $day < 1 || $day > 31) {
                 throw new \InvalidArgumentException('Invalid day. Must be a number between 1 and 31.');
             }
-    
+
+            // Check if operator is supported
+            $supportedOperators = ['=', '<', '>', '<=', '>=', '<>', '!='];
+            if (!in_array($operator, $supportedOperators)) {
+                throw new \InvalidArgumentException('Invalid operator. Supported operators are: ' . implode(', ', $supportedOperators));
+            }
+
             $this->_buildWhereClause($this->_getDateFunction($column)['day'], (int)$day, $operator, $whereType);
             return $this;
         } catch (\InvalidArgumentException $e) {
             $this->db_error_log($e, __FUNCTION__);
         }
     }
-    
+
     /**
      * Adds a year comparison condition to the WHERE clause.
      *
@@ -855,29 +882,35 @@ class Database
      * 
      * @param string $column The name of the column to compare.
      * @param int $year The year number.
-     * @param string $operator (optional) The comparison operator (e.g., '=', '<', '>', '<>'). Defaults to '='.
+     * @param string $operator (optional) The comparison operator (e.g., '=', '<', '>', '<=', '>=', '<>', '!='). Defaults to '='.
      * @param string $whereType (optional) The type of WHERE clause (AND or OR). Defaults to AND.
      * @throws \InvalidArgumentException If the column name is not a string or the year is invalid.
      * @return $this This object for method chaining.
      */
-    public function whereYear($column, $year, $operator = '=' $whereType = 'AND')
+    public function whereYear($column, $year, $operator = '=', $whereType = 'AND')
     {
         try {
             if (!is_string($column)) {
                 throw new \InvalidArgumentException('Invalid column name. Must be a string.');
             }
-    
-            if (!is_numeric($year)) {
-                throw new \InvalidArgumentException('Invalid year. Must be a number.');
+
+            if (!is_numeric($year) || strlen((string)$year) !== 4) {
+                throw new \InvalidArgumentException('Invalid year. Must be a four-digit number.');
             }
-    
+
+            // Check if operator is supported
+            $supportedOperators = ['=', '<', '>', '<=', '>=', '<>', '!='];
+            if (!in_array($operator, $supportedOperators)) {
+                throw new \InvalidArgumentException('Invalid operator. Supported operators are: ' . implode(', ', $supportedOperators));
+            }
+
             $this->_buildWhereClause($this->_getDateFunction($column)['year'], (int)$year, $operator, $whereType);
             return $this;
         } catch (\InvalidArgumentException $e) {
             $this->db_error_log($e, __FUNCTION__);
         }
     }
-    
+
     /**
      * Adds a where clause to search within a JSON column.
      *
@@ -904,12 +937,11 @@ class Database
                 $jsonCondition = "JSON_EXISTS($columnName, 'strict $.$jsonPath?(@ == \"$value\")')";
                 break;
             default:
-                throw new \Exception("Unsupported database driver: $this->driver");
+                throw new \Exception("Unsupported database driver: " . $this->driver);
         }
 
         // Add the condition to the query builder
         $this->where($jsonCondition, null, 'JSON');
-
         return $this;
     }
 
@@ -1183,12 +1215,11 @@ class Database
      * This method fetches data from the database and applies pagination based on the provided parameters.
      * 
      * @param int $currentPage (optional) The current page number (defaults to 1).
-     * @param int $limit (optional) The number of records to retrieve per page (defaults to 10).
      * @param int $draw (optional) An identifier used for request tracking in server-side processing (defaults to 1).
      * @return array The paginated query results as an array.
      * @throws \Exception If there's an error accessing the database or if the table does not exist.
      */
-    public function paginate($currentPage = 1, $limit = 10, $draw = 1)
+    public function paginate($currentPage = 1, $draw = 1)
     {
         // Build the final SELECT query string
         $this->_buildSelectQuery();
@@ -1197,6 +1228,9 @@ class Database
         $this->_startProfiler(__FUNCTION__);
 
         try {
+
+            // Set default 10 if no limit has been set
+            $limit = empty($this->limit) ? 10 : $this->limit;
 
             // Calculate offset
             $offset = ($currentPage - 1) * $limit;
@@ -1924,7 +1958,7 @@ class Database
                     "day" => "EXTRACT(DAY FROM $column)",
                 ];
             default:
-                throw new \InvalidArgumentException("Unsupported database type: $dbType");
+                throw new \InvalidArgumentException("Unsupported database type: " . $this->driver);
         }
     }
 
@@ -1948,14 +1982,15 @@ class Database
         return $jsonResult;
     }
 
-    private function generateJSONsearch($column, $keyWithDots, $valueToSearch) {
+    private function generateJSONsearch($column, $keyWithDots, $valueToSearch)
+    {
         $jsonKey = str_replace('.', '":"', $keyWithDots);
         $jsonKey = '{"' . $jsonKey . '"}';
         $jsonCondition = '{"' . $column . '": ' . $jsonKey . '}';
-    
+
         // MySQL query condition using JSON_CONTAINS function
         $condition = "JSON_CONTAINS($column, '$jsonCondition', '\$.')";
-    
+
         return $condition;
     }
 }
