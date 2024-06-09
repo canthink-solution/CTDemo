@@ -10,7 +10,7 @@ namespace Sys\framework;
  * @author    Mohd Fahmy Izwan Zulkhafri <faizzul14@gmail.com>
  * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @link      -
- * @version   0.1.1
+ * @version   0.1.2
  */
 
 class Database
@@ -61,6 +61,11 @@ class Database
      * @var int|null The limit for the query.
      */
     protected $limit;
+
+    /**
+     * @var int|null The offset for the query.
+     */
+    protected $offset;
 
     /**
      * @var array|null The order by columns and directions.
@@ -411,6 +416,7 @@ class Database
         $this->table = null;
         $this->fields = '*';
         $this->limit = null;
+        $this->offset = null;
         $this->orderBy = null;
         $this->groupBy = null;
         $this->where = null;
@@ -453,7 +459,38 @@ class Database
             throw new \InvalidArgumentException('Limit must be an integer.');
         }
 
+        // Check if the input is less then 1
+        if ($limit < 1) {
+            throw new \InvalidArgumentException('Limit must be integer with higher then zero');
+        }
+
         $this->limit = $limit;
+        return $this;
+    }
+
+    /**
+     * Set the offset for the query.
+     *
+     * @param int $offset The offset for the query.
+     * @return $this
+     * @throws \InvalidArgumentException If the $offset parameter is not an integer.
+     */
+    public function offset($offset)
+    {
+        // Try to cast the input to an integer
+        $offset = filter_var($offset, FILTER_VALIDATE_INT);
+
+        // Check if the input is not an integer after casting
+        if ($offset === false) {
+            throw new \InvalidArgumentException('Offset must be an integer.');
+        }
+
+        // Check if the input is less then 1
+        if ($offset < 1) {
+            throw new \InvalidArgumentException('Offset must be integer with higher then zero');
+        }
+
+        $this->offset = $offset;
         return $this;
     }
 
@@ -1215,12 +1252,16 @@ class Database
      * This method fetches data from the database and applies pagination based on the provided parameters.
      * 
      * @param int $currentPage (optional) The current page number (defaults to 1).
+     * @param int $limit (optional) The number of records to retrieve per page (defaults to 10).
      * @param int $draw (optional) An identifier used for request tracking in server-side processing (defaults to 1).
      * @return array The paginated query results as an array.
      * @throws \Exception If there's an error accessing the database or if the table does not exist.
      */
-    public function paginate($currentPage = 1, $draw = 1)
+    public function paginate($currentPage = 1, $limit = 10, $draw = 1)
     {
+        // Reset the offset & limit to ensure the $this->_query not generate with that when call _buildSelectQuery() function
+        $this->offset = $this->limit = null;
+
         // Build the final SELECT query string
         $this->_buildSelectQuery();
 
@@ -1228,9 +1269,6 @@ class Database
         $this->_startProfiler(__FUNCTION__);
 
         try {
-
-            // Set default 10 if no limit has been set
-            $limit = empty($this->limit) ? 10 : $this->limit;
 
             // Calculate offset
             $offset = ($currentPage - 1) * $limit;
@@ -1455,7 +1493,28 @@ class Database
 
         // Add LIMIT clause if specified
         if ($this->limit) {
-            $this->_query .= " LIMIT " . $this->limit;
+            switch ($this->driver) {
+                case 'mysql':
+                    $this->_query .= " LIMIT " . $this->limit;
+                    break;
+                case 'mssql':
+                    $this->_query .= " TOP (" . $this->limit . ") ";
+                    break;
+                case 'oracle':
+                case 'oci':
+                    $this->_query .= " ROWNUM <= " . ($this->limit);
+                    break;
+                case 'firebird':
+                    $this->_query .= " FETCH FIRST " . $this->limit . " ROWS ONLY";
+                    break;
+                default:
+                    throw new \Exception("LIMIT clause not supported for driver: " . $this->driver);
+            }
+        }
+
+        // Add OFFSET clause if offset is set
+        if ($this->offset) {
+            $this->_query .= " OFFSET " . $this->offset;
         }
 
         // Expand asterisks in the query (replace with actual column names)
@@ -1960,37 +2019,5 @@ class Database
             default:
                 throw new \InvalidArgumentException("Unsupported database type: " . $this->driver);
         }
-    }
-
-    private function generateJsonContainsExpression($keyToSearch, $value)
-    {
-        $parts = explode('.', $keyToSearch);
-
-        $jsonResults = [];
-
-        // Iterate over the parts to construct the nested structure
-        foreach ($parts as $part) {
-            $jsonResults = [$part => $jsonResults];
-        }
-
-        // Assign the value to the innermost key
-        $jsonResults = array_fill_keys(explode('.', $keyToSearch), $value);
-
-        // Encode the JSON string
-        $jsonResult = json_encode($jsonResults);
-
-        return $jsonResult;
-    }
-
-    private function generateJSONsearch($column, $keyWithDots, $valueToSearch)
-    {
-        $jsonKey = str_replace('.', '":"', $keyWithDots);
-        $jsonKey = '{"' . $jsonKey . '"}';
-        $jsonCondition = '{"' . $column . '": ' . $jsonKey . '}';
-
-        // MySQL query condition using JSON_CONTAINS function
-        $condition = "JSON_CONTAINS($column, '$jsonCondition', '\$.')";
-
-        return $condition;
     }
 }
