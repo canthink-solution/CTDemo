@@ -13,6 +13,8 @@ namespace Sys\framework;
  * @version   0.1.2
  */
 
+use Sys\framework\Cache;
+
 class Database
 {
     /**
@@ -116,6 +118,16 @@ class Database
      * @var array An array to store profiling information (optional).
      */
     protected $_profiler = [];
+
+    /**
+     * @var string|null The cache key.
+     */
+    protected $cacheFile = null;
+
+    /**
+     * @var string|integer The cache to expire in seconds.
+     */
+    protected $cacheFileExpired = 1800;
 
     /**
      * Constructor.
@@ -426,6 +438,8 @@ class Database
         $this->_binds = [];
         $this->_query = [];
         $this->relations = [];
+        $this->cacheFile = null;
+        $this->cacheFileExpired = 3600;
 
         return $this;
     }
@@ -1164,54 +1178,69 @@ class Database
      */
     public function get()
     {
-        // Build the final SELECT query string
-        $this->_buildSelectQuery();
+        $result = null;
 
-        // Start profiler for performance measurement 
-        $this->_startProfiler(__FUNCTION__);
-
-        // Prepare the query statement
-        $stmt = $this->pdo[$this->connectionName]->prepare($this->_query);
-
-        // Bind parameters if any
-        if (!empty($this->_binds)) {
-            $this->_bindParams($stmt, $this->_binds);
+        if (!empty($this->cacheFile)) {
+            $result = $this->_getCacheData($this->cacheFile);
         }
 
-        try {
-            // Log the query for debugging 
-            $this->_profiler['query'] = $this->_query;
+        if (empty($result)) {
 
-            // Generate the full query string with bound values 
-            $this->_generateFullQuery($this->_query, $this->_binds);
+            // Build the final SELECT query string
+            $this->_buildSelectQuery();
 
-            // Execute the prepared statement
-            $stmt->execute();
+            // Start profiler for performance measurement 
+            $this->_startProfiler(__FUNCTION__);
 
-            // Fetch all results as associative arrays
-            $result = $stmt->fetchAll(\PDO::FETCH_ASSOC);
-        } catch (\PDOException $e) {
-            // Log database errors
-            $this->db_error_log($e, __FUNCTION__);
-            throw $e; // Re-throw the exception
+            // Prepare the query statement
+            $stmt = $this->pdo[$this->connectionName]->prepare($this->_query);
+
+            // Bind parameters if any
+            if (!empty($this->_binds)) {
+                $this->_bindParams($stmt, $this->_binds);
+            }
+
+            try {
+                // Log the query for debugging 
+                $this->_profiler['query'] = $this->_query;
+
+                // Generate the full query string with bound values 
+                $this->_generateFullQuery($this->_query, $this->_binds);
+
+                // Execute the prepared statement
+                $stmt->execute();
+
+                // Fetch all results as associative arrays
+                $result = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+            } catch (\PDOException $e) {
+                // Log database errors
+                $this->db_error_log($e, __FUNCTION__);
+                throw $e; // Re-throw the exception
+            }
+
+            // Stop profiler 
+            $this->_stopProfiler();
+
+            // Save connection name, relations & caching info temporarily
+            $_temp_connection = $this->connectionName;
+            $_temp_relations = $this->relations;
+            $_temp_cacheKey = $this->cacheFile;
+            $_temp_cacheExpired = $this->cacheFileExpired;
+
+            // Reset internal properties for next query
+            $this->reset();
+
+            // Process eager loading if implemented 
+            if (!empty($result) && !empty($_temp_relations)) {
+                $result = $this->_processEagerLoading($result, $_temp_relations, $_temp_connection, 'get');
+            }
+
+            if (!empty($_temp_cacheKey) && !empty($result)) {
+                $this->_setCacheData($_temp_cacheKey, $result, $_temp_cacheExpired);
+            }
+
+            unset($_temp_connection, $_temp_relations, $_temp_cacheKey, $_temp_cacheExpired);
         }
-
-        // Stop profiler 
-        $this->_stopProfiler();
-
-        // Save connection name and relations temporarily
-        $_temp_connection = $this->connectionName;
-        $_temp_relations = $this->relations;
-
-        // Reset internal properties for next query
-        $this->reset();
-
-        // Process eager loading if implemented 
-        if (!empty($result) && !empty($_temp_relations)) {
-            $result = $this->_processEagerLoading($result, $_temp_relations, $_temp_connection, 'get');
-        }
-
-        $_temp_connection = $_temp_relations = NULL;
 
         return $result;
     }
@@ -1228,57 +1257,71 @@ class Database
      */
     public function fetch()
     {
-        // Set limit to 1 to ensure only 1 data return
-        $this->limit(1);
+        $result = null;
 
-        // Build the final SELECT query string
-        $this->_buildSelectQuery();
-
-        // Start profiler for performance measurement
-        $this->_startProfiler(__FUNCTION__);
-
-        // Prepare the query statement
-        $stmt = $this->pdo[$this->connectionName]->prepare($this->_query);
-
-        // Bind parameters if any
-        if (!empty($this->_binds)) {
-            $this->_bindParams($stmt, $this->_binds);
+        if (!empty($this->cacheFile)) {
+            $result = $this->_getCacheData($this->cacheFile);
         }
 
-        try {
-            // Log the query for debugging
-            $this->_profiler['query'] = $this->_query;
+        if (empty($result)) {
+            // Set limit to 1 to ensure only 1 data return
+            $this->limit(1);
 
-            // Generate the full query string with bound values
-            $this->_generateFullQuery($this->_query, $this->_binds);
+            // Build the final SELECT query string
+            $this->_buildSelectQuery();
 
-            // Execute the prepared statement
-            $stmt->execute();
+            // Start profiler for performance measurement
+            $this->_startProfiler(__FUNCTION__);
 
-            // Fetch only the first result as an associative array
-            $result = $stmt->fetch(\PDO::FETCH_ASSOC);
-        } catch (\PDOException $e) {
-            // Log database errors
-            $this->db_error_log($e, __FUNCTION__);
-            throw $e; // Re-throw the exception
+            // Prepare the query statement
+            $stmt = $this->pdo[$this->connectionName]->prepare($this->_query);
+
+            // Bind parameters if any
+            if (!empty($this->_binds)) {
+                $this->_bindParams($stmt, $this->_binds);
+            }
+
+            try {
+                // Log the query for debugging
+                $this->_profiler['query'] = $this->_query;
+
+                // Generate the full query string with bound values
+                $this->_generateFullQuery($this->_query, $this->_binds);
+
+                // Execute the prepared statement
+                $stmt->execute();
+
+                // Fetch only the first result as an associative array
+                $result = $stmt->fetch(\PDO::FETCH_ASSOC);
+            } catch (\PDOException $e) {
+                // Log database errors
+                $this->db_error_log($e, __FUNCTION__);
+                throw $e; // Re-throw the exception
+            }
+
+            // Stop profiler
+            $this->_stopProfiler();
+
+            // Save connection name, relations & caching info temporarily
+            $_temp_connection = $this->connectionName;
+            $_temp_relations = $this->relations;
+            $_temp_cacheKey = $this->cacheFile;
+            $_temp_cacheExpired = $this->cacheFileExpired;
+
+            // Reset internal properties for next query
+            $this->reset();
+
+            // Process eager loading if implemented 
+            if (!empty($result) && !empty($_temp_relations)) {
+                $result = $this->_processEagerLoading($result, $_temp_relations, $_temp_connection, 'fetch');
+            }
+
+            if (!empty($_temp_cacheKey) && !empty($result)) {
+                $this->_setCacheData($_temp_cacheKey, $result, $_temp_cacheExpired);
+            }
+
+            unset($_temp_connection, $_temp_relations, $_temp_cacheKey, $_temp_cacheExpired);
         }
-
-        // Stop profiler
-        $this->_stopProfiler();
-
-        // Save connection name and relations temporarily
-        $_temp_connection = $this->connectionName;
-        $_temp_relations = $this->relations;
-
-        // Reset internal properties for next query
-        $this->reset();
-
-        // Process eager loading if implemented 
-        if (!empty($result) && !empty($_temp_relations)) {
-            $result = $this->_processEagerLoading($result, $_temp_relations, $_temp_connection, 'fetch');
-        }
-
-        $_temp_connection = $_temp_relations = NULL;
 
         // Return the first result or null if not found
         return $result;
@@ -2122,5 +2165,52 @@ class Database
             default:
                 throw new \InvalidArgumentException("Unsupported database type: " . $this->driver);
         }
+    }
+
+    /**
+     * Caches data with an expiration time.
+     *
+     * This method sets a cache entry identified by the provided key with optional expiration time.
+     *
+     * @param string $key The unique key identifying the cache entry.
+     * @param int $expire The expiration time of the cache entry in seconds (default: 1800 seconds).
+     * @return $this Returns the current object instance for method chaining.
+     */
+    public function cache($key, $expire = 1800)
+    {
+        $this->cacheFile = $key;
+        $this->cacheFileExpired = $expire;
+
+        return $this;
+    }
+
+    /**
+     * Retrieves cached data for the given key.
+     *
+     * This method retrieves cached data identified by the provided key using the Cache class.
+     *
+     * @param string $key The unique key identifying the cached data.
+     * @return mixed|null Returns the cached data if found; otherwise, returns null.
+     */
+    public function _getCacheData($key)
+    {
+        $cache = new Cache();
+        return $cache->get($key);
+    }
+
+    /**
+     * Stores data in the cache with an optional expiration time.
+     *
+     * This method stores data identified by the provided key in the cache using the Cache class.
+     *
+     * @param string $key The unique key identifying the cache entry.
+     * @param mixed $data The data to be stored in the cache.
+     * @param int $expire The expiration time of the cache entry in seconds (default: 1800 seconds).
+     * @return bool Returns true on success, false on failure.
+     */
+    public function _setCacheData($key, $data, $expire = 1800)
+    {
+        $cache = new Cache();
+        return $cache->set($key, $data, $expire);
     }
 }

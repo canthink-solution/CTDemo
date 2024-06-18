@@ -11,7 +11,7 @@ namespace Sys\framework;
  * @package   Cache
  * @author    Mohd Fahmy Izwan Zulkhafri <faizzul14@gmail.com>
  * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License
- * @link      http://yourlink.com
+ * @link      -
  * @version   0.1.0
  */
 
@@ -64,7 +64,7 @@ class Cache
         }
 
         // Read and return cached data
-        return unserialize(file_get_contents($filename));
+        return $this->decompressData(file_get_contents($filename));
     }
 
     /**
@@ -78,13 +78,12 @@ class Cache
     public function set($key, $data, $expire = null)
     {
         $filename = $this->getCacheFilename($key);
-        $data = serialize($data);
-
+        
         if (empty($expire)) {
             $expire = $this->defaultExpire;
         }
 
-        return file_put_contents($filename, $data, LOCK_EX) !== false;
+        return file_put_contents($filename, $this->compressData($data), LOCK_EX) !== false;
     }
 
     /**
@@ -121,5 +120,27 @@ class Cache
         }
 
         return $filename;
+    }
+
+    /**
+     * Compresses data using gzip compression.
+     *
+     * @param mixed $data The data to compress.
+     * @return string|false Returns the compressed data as a string, or false on failure.
+     */
+    protected function compressData($data)
+    {
+        return gzcompress(serialize($data), 9); // Using maximum compression level (9)
+    }
+
+    /**
+     * Decompresses data compressed with gzip.
+     *
+     * @param string $compressedData The compressed data string.
+     * @return mixed|false Returns the original data or false on failure.
+     */
+    protected function decompressData($compressedData)
+    {
+        return unserialize(gzuncompress($compressedData));
     }
 }
