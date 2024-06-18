@@ -1,6 +1,6 @@
 <?php
 
-namespace Sys\system;
+namespace Sys\framework;
 
 /**
  * Cache Class
