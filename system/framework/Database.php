@@ -485,9 +485,9 @@ class Database
             throw new \InvalidArgumentException('Offset must be an integer.');
         }
 
-        // Check if the input is less then 1
-        if ($offset < 1) {
-            throw new \InvalidArgumentException('Offset must be integer with higher then zero');
+        // Check if the input is less then 0
+        if ($offset < 0) {
+            throw new \InvalidArgumentException('Offset must be integer with higher or equal to zero');
         }
 
         $this->offset = $offset;
@@ -571,6 +571,43 @@ class Database
             return $this;
         } catch (\InvalidArgumentException $e) {
             $this->db_error_log($e, __FUNCTION__);
+        }
+    }
+
+    /**
+     * Add raw WHERE clause.
+     *
+     * This method allows for building where clauses with raw query.
+     *
+     * @param string $rawQuery The raw query string for where only.
+     * @param array $value Optional. The bindings for the raw query.
+     * @param string $whereType (optional) The type of where clause (e.g., 'AND', 'OR'). Defaults to 'AND'.
+     * @throws \InvalidArgumentException If $rawQuery is not a string, an associative array, or a full SQL query.
+     *
+     * @return $this
+     */
+    public function whereRaw($rawQuery, $value = [], $whereType = 'AND')
+    {
+        try {
+            if (!is_string($rawQuery)) {
+                throw new \InvalidArgumentException('Invalid query format. Must be a string');
+            }
+
+            // Check if rawQuery contains a full SQL statement
+            $forbiddenKeywords = '/\b(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|REPLACE|GRANT|REVOKE|SHOW)\b/i';
+            if (preg_match($forbiddenKeywords, $rawQuery)) {
+                throw new \InvalidArgumentException('Invalid raw query. Full SQL statements are not allowed in whereRaw.');
+            }
+
+            if (!empty($value) && !is_array($value)) {
+                throw new \InvalidArgumentException("Value for 'whereRaw' must be an array");
+            }
+
+            $this->_buildWhereClause($rawQuery, $value, 'RAW', $whereType);
+            return $this;
+        } catch (\InvalidArgumentException $e) {
+            $this->db_error_log($e, __FUNCTION__);
+            throw $e; // Rethrow the exception after logging it
         }
     }
 
@@ -970,6 +1007,7 @@ class Database
                 $jsonCondition = "JSON_VALUE($columnName, '$.\"$jsonPath\"') = '$value'";
                 break;
             case 'oracle':
+            case 'oci':
                 // Oracle specific JSON path querying using JSON_EXISTS
                 $jsonCondition = "JSON_EXISTS($columnName, 'strict $.$jsonPath?(@ == \"$value\")')";
                 break;
@@ -1277,14 +1315,12 @@ class Database
             switch ($this->driver) {
                 case 'mysql':
                 case 'pgsql':
+                case 'oracle':
+                case 'oci':
                     $sqlTotal = 'SELECT COUNT(*) count ' . substr($this->_query, strpos($this->_query, 'FROM'));
                     break;
                 case 'mssql':
                     $sqlTotal = 'SELECT COUNT(*) count FROM (' . $this->_query . ') AS subquery';
-                    break;
-                case 'oracle':
-                case 'oci':
-                    $sqlTotal = 'SELECT COUNT(*) count FROM (' . $this->_query . ')';
                     break;
                 default:
                     throw new \Exception('Unsupported database driver for paginate()');
@@ -1394,6 +1430,63 @@ class Database
     }
 
     /**
+     * Execute the query in chunks.
+     *
+     * @param int $size The size of each chunk.
+     * @param callable $callback The callback to handle each chunk.
+     */
+    public function chunk($size, callable $callback)
+    {
+        $offset = 0;
+
+        // Set the temporary data to holds the original value
+        $_tempConnection = $this->connectionName;
+        $_tempTable = $this->table;
+        $_tempFields = $this->fields;
+        $_tempOrderBy = $this->orderBy;
+        $_tempGroupBy = $this->groupBy;
+        $_tempWhere = $this->where;
+        $_tempJoins = $this->joins;
+        $_tempBinds = $this->_binds;
+        $_tempRelation = $this->relations;
+
+        while (true) {
+
+            // Set back to original value for next details
+            $this->connectionName = $_tempConnection;
+            $this->table = $_tempTable;
+            $this->fields = $_tempFields;
+            $this->orderBy = $_tempOrderBy;
+            $this->groupBy = $_tempGroupBy;
+            $this->where = $_tempWhere;
+            $this->joins = $_tempJoins;
+            $this->_binds = $_tempBinds;
+            $this->relations = $_tempRelation;
+
+            $this->limit($size)->offset($offset);
+            $results = $this->get();
+
+            if (empty($results)) {
+                break;
+            }
+
+            if (call_user_func($callback, $results) === false) {
+                break;
+            }
+
+            $offset += $size;
+        }
+
+        // Unset the variables to free memory
+        unset($_tempConnection, $_tempTable, $_tempFields, $_tempOrderBy, $_tempGroupBy, $_tempWhere, $_tempJoins, $_tempBinds, $_tempRelation);
+
+        // Reset internal properties for next query
+        $this->reset();
+
+        return $this;
+    }
+
+    /**
      * Builds a WHERE clause fragment based on provided conditions.
      *
      * This function is used internally to construct WHERE clause parts based on
@@ -1426,7 +1519,6 @@ class Database
                     throw new \InvalidArgumentException('Value for IN or NOT IN operator must be an array');
                 }
                 $this->where .= "$columnName $operator (" . implode(',', array_fill(0, count($value), $placeholder)) . ")";
-                $this->_binds = array_merge($this->_binds, $value);
                 break;
             case 'BETWEEN':
             case 'NOT BETWEEN':
@@ -1434,7 +1526,6 @@ class Database
                     throw new \InvalidArgumentException("Value for 'BETWEEN' or 'NOT BETWEEN' operator must be an array with two elements (start and end)");
                 }
                 $this->where .= "($columnName $operator $placeholder AND $placeholder)";
-                $this->_binds = array_merge($this->_binds, $value);
                 break;
             case 'JSON':
                 $this->where .= "$columnName";
@@ -1443,9 +1534,20 @@ class Database
             case 'IS NOT NULL':
                 $this->where .= "$columnName $operator";
                 break;
+            case 'RAW':
+                $this->where .= "($columnName)";
+                break;
             default:
                 $this->where .= "$columnName $operator $placeholder";
+                break;
+        }
+
+        if (!empty($value)) {
+            if (is_array($value)) {
+                $this->_binds = array_merge($this->_binds, $value);
+            } else {
                 $this->_binds[] = $value;
+            }
         }
     }
 
@@ -1599,7 +1701,7 @@ class Database
             $primaryKeys = array_values(array_unique(array_column($data, $pk_id), SORT_REGULAR));
 
             // Check if batch processing is needed
-            $batchSize = 10000; // Adjust this threshold as needed
+            $batchSize = 1000; // Adjust this threshold as needed
             if (count($primaryKeys) > $batchSize) {
                 $this->_processEagerLoadingInBatches($data, $primaryKeys, $batchSize, $table, $fk_id, $pk_id, $connectionName, $method, $alias, $callback);
             } else {
@@ -2010,6 +2112,7 @@ class Database
                     "day" => "DATEPART(day, $column)",
                 ];
             case 'oracle':
+            case 'oci':
                 return [
                     "date" => "TO_CHAR($column, 'YYYY-MM-DD')",
                     "year" => "EXTRACT(YEAR FROM $column)",
