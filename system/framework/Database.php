@@ -10,7 +10,7 @@ namespace Sys\framework;
  * @author    Mohd Fahmy Izwan Zulkhafri <faizzul14@gmail.com>
  * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @link      -
- * @version   0.1.2
+ * @version   0.1.3
  */
 
 use Sys\framework\Cache;
@@ -439,7 +439,7 @@ class Database
         $this->_query = [];
         $this->relations = [];
         $this->cacheFile = null;
-        $this->cacheFileExpired = 3600;
+        $this->cacheFileExpired = 1800;
 
         return $this;
     }
@@ -2192,7 +2192,7 @@ class Database
      * @param string $key The unique key identifying the cached data.
      * @return mixed|null Returns the cached data if found; otherwise, returns null.
      */
-    public function _getCacheData($key)
+    private function _getCacheData($key)
     {
         $cache = new Cache();
         return $cache->get($key);
@@ -2208,7 +2208,7 @@ class Database
      * @param int $expire The expiration time of the cache entry in seconds (default: 1800 seconds).
      * @return bool Returns true on success, false on failure.
      */
-    public function _setCacheData($key, $data, $expire = 1800)
+    private function _setCacheData($key, $data, $expire = 1800)
     {
         $cache = new Cache();
         return $cache->set($key, $data, $expire);
