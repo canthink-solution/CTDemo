@@ -75,11 +75,6 @@ class Database
     protected $orderBy;
 
     /**
-     * @var array|null The order by raw string.
-     */
-    protected $orderByRaw;
-
-    /**
      * @var array|null The group by columns.
      */
     protected $groupBy;
@@ -435,7 +430,6 @@ class Database
         $this->limit = null;
         $this->offset = null;
         $this->orderBy = null;
-        $this->orderByRaw = null;
         $this->groupBy = null;
         $this->where = null;
         $this->joins = null;
@@ -1233,7 +1227,7 @@ class Database
         $this->_forbidRawQuery($string, 'Full SQL statements are not allowed in `orderByRaw`.');
 
         // Store the raw order by string
-        $this->orderByRaw = $string;
+        $this->orderBy = $string;
 
         return $this;
     }
@@ -1771,15 +1765,8 @@ class Database
             $this->_query .= " GROUP BY " . $this->groupBy;
         }
 
-        // Add ORDER BY clause if specified
-        if ($this->orderBy) {
-            $this->_query .= " ORDER BY " . $this->orderBy;
-        }
-
         // Add ORDER BY RAW clause if specified
-        if ($this->orderByRaw) {
-            $this->_query .= (stristr($this->_query, 'ORDER BY') ? ', ' : ' ORDER BY ') . $this->orderByRaw;
-        }
+        $this->_query .= " ORDER BY " . $this->orderBy;
 
         // Add LIMIT clause if specified
         if ($this->limit) {
