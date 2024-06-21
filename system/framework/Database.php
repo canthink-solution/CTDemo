@@ -75,6 +75,11 @@ class Database
     protected $orderBy;
 
     /**
+     * @var array|null The order by raw string.
+     */
+    protected $orderByRaw;
+
+    /**
      * @var array|null The group by columns.
      */
     protected $groupBy;
@@ -430,6 +435,7 @@ class Database
         $this->limit = null;
         $this->offset = null;
         $this->orderBy = null;
+        $this->orderByRaw = null;
         $this->groupBy = null;
         $this->where = null;
         $this->joins = null;
@@ -531,6 +537,20 @@ class Database
                 throw new \InvalidArgumentException('Invalid column name. Must be a string or an associative array.');
             }
 
+            // Check if operator is supported
+            $supportedOperators = ['=', '<', '>', '<=', '>=', '<>', '!=', 'LIKE'];
+            if (!in_array($operator, $supportedOperators)) {
+                throw new \InvalidArgumentException('Invalid operator. Supported operators are: ' . implode(', ', $supportedOperators));
+            }
+
+            // Ensure where type AND / OR
+            if (!in_array($whereType, ['AND', 'OR'])) {
+                throw new \InvalidArgumentException('Invalid where type. Supported operators are: AND/OR');
+            }
+
+            // Check if variable contains a full SQL statement
+            $this->_forbidRawQuery([$columnName, $value], 'Full/Sub SQL statements are not allowed in where(). Please use whereRaw() function.');
+
             if (is_array($columnName)) {
                 foreach ($columnName as $column => $val) {
                     if (!is_string($column)) {
@@ -571,6 +591,20 @@ class Database
                 throw new \InvalidArgumentException('Invalid column name. Must be a string or an associative array.');
             }
 
+            // Check if operator is supported
+            $supportedOperators = ['=', '<', '>', '<=', '>=', '<>', '!=', 'LIKE'];
+            if (!in_array($operator, $supportedOperators)) {
+                throw new \InvalidArgumentException('Invalid operator. Supported operators are: ' . implode(', ', $supportedOperators));
+            }
+
+            // Ensure where type AND / OR
+            if (!in_array($whereType, ['AND', 'OR'])) {
+                throw new \InvalidArgumentException('Invalid where type. Supported operators are: AND/OR');
+            }
+
+            // Check if variable contains a full SQL statement
+            $this->_forbidRawQuery([$columnName, $value], 'Full/Sub SQL statements are not allowed in orWere(). Please use whereRaw() function.');
+
             if (is_array($columnName)) {
                 foreach ($columnName as $column => $val) {
                     if (!is_string($column)) {
@@ -607,15 +641,17 @@ class Database
                 throw new \InvalidArgumentException('Invalid query format. Must be a string');
             }
 
-            // Check if rawQuery contains a full SQL statement
-            $forbiddenKeywords = '/\b(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|REPLACE|GRANT|REVOKE|SHOW)\b/i';
-            if (preg_match($forbiddenKeywords, $rawQuery)) {
-                throw new \InvalidArgumentException('Invalid raw query. Full SQL statements are not allowed in whereRaw.');
-            }
-
             if (!empty($value) && !is_array($value)) {
                 throw new \InvalidArgumentException("Value for 'whereRaw' must be an array");
             }
+
+            // Ensure where type AND / OR
+            if (!in_array($whereType, ['AND', 'OR'])) {
+                throw new \InvalidArgumentException('Invalid where type. Supported operators are: AND/OR');
+            }
+
+            // Check if variable contains a full SQL statement
+            $this->_forbidRawQuery($rawQuery, 'Full/Sub SQL statements are not allowed in whereRaw(). Please use rawQuery() function.');
 
             $this->_buildWhereClause($rawQuery, $value, 'RAW', $whereType);
             return $this;
@@ -648,6 +684,11 @@ class Database
                 throw new \InvalidArgumentException('Invalid column name. Must be a string.');
             }
 
+            // Ensure where type AND / OR
+            if (!in_array($whereType, ['AND', 'OR'])) {
+                throw new \InvalidArgumentException('Invalid where type. Supported operators are: AND/OR');
+            }
+
             // Validate and format start and end values
             $formattedValues = [];
             foreach ([$start, $end] as $value) {
@@ -669,6 +710,9 @@ class Database
             if (!($formattedValues[0] <= $formattedValues[1])) {
                 throw new \InvalidArgumentException('Start value must be less than or equal to end value for BETWEEN.');
             }
+
+            // Check if variable contains a full SQL statement
+            $this->_forbidRawQuery($columnName, 'Full/Sub SQL statements are not allowed in whereBetween(). Please use whereRaw() function.');
 
             $this->_buildWhereClause($columnName, $formattedValues, 'BETWEEN', $whereType);
 
@@ -701,6 +745,11 @@ class Database
                 throw new \InvalidArgumentException('Invalid column name. Must be a string.');
             }
 
+            // Ensure where type AND / OR
+            if (!in_array($whereType, ['AND', 'OR'])) {
+                throw new \InvalidArgumentException('Invalid where type. Supported operators are: AND/OR');
+            }
+
             $formattedValues = [];
             foreach ([$start, $end] as $value) {
                 if (is_int($value) || is_float($value)) {
@@ -721,6 +770,9 @@ class Database
             if (!($formattedValues[0] <= $formattedValues[1])) {
                 throw new \InvalidArgumentException('Start value must be less than or equal to end value for NOT BETWEEN.');
             }
+
+            // Check if variable contains a full SQL statement
+            $this->_forbidRawQuery($columnName, 'Full/Sub SQL statements are not allowed in whereNotBetween(). Please use whereRaw() function.');
 
             $this->_buildWhereClause($columnName, $formattedValues, 'NOT BETWEEN', $whereType);
             return $this;
@@ -753,6 +805,14 @@ class Database
                 throw new \InvalidArgumentException("Value for 'IN' operator must be an array");
             }
 
+            // Ensure where type AND / OR
+            if (!in_array($whereType, ['AND', 'OR'])) {
+                throw new \InvalidArgumentException('Invalid where type. Supported operators are: AND/OR');
+            }
+
+            // Check if variable contains a full SQL statement
+            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in whereIn(). Please use whereRaw() function.');
+
             $this->_buildWhereClause($column, $value, 'IN', $whereType);
             return $this;
         } catch (\InvalidArgumentException $e) {
@@ -784,6 +844,14 @@ class Database
                 throw new \InvalidArgumentException("Value for 'NOT IN' operator must be an array");
             }
 
+            // Ensure where type AND / OR
+            if (!in_array($whereType, ['AND', 'OR'])) {
+                throw new \InvalidArgumentException('Invalid where type. Supported operators are: AND/OR');
+            }
+
+            // Check if variable contains a full SQL statement
+            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in whereNotIn(). Please use whereRaw() function.');
+
             $this->_buildWhereClause($column, $value, 'NOT IN', $whereType);
             return $this;
         } catch (\InvalidArgumentException $e) {
@@ -807,6 +875,14 @@ class Database
             if (!is_string($column)) {
                 throw new \InvalidArgumentException('Invalid column name. Must be a string.');
             }
+
+            // Ensure where type AND / OR
+            if (!in_array($whereType, ['AND', 'OR'])) {
+                throw new \InvalidArgumentException('Invalid where type. Supported operators are: AND/OR');
+            }
+
+            // Check if variable contains a full SQL statement
+            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in whereNull(). Please use whereRaw() function.');
 
             $this->_buildWhereClause($column, null, 'IS NULL', $whereType);
             return $this;
@@ -832,6 +908,14 @@ class Database
             if (!is_string($column)) {
                 throw new \InvalidArgumentException('Invalid column name. Must be a string.');
             }
+
+            // Ensure where type AND / OR
+            if (!in_array($whereType, ['AND', 'OR'])) {
+                throw new \InvalidArgumentException('Invalid where type. Supported operators are: AND/OR');
+            }
+
+            // Check if variable contains a full SQL statement
+            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in whereNotNull(). Please use whereRaw() function.');
 
             $this->_buildWhereClause($column, null, 'IS NOT NULL', $whereType);
             return $this;
@@ -877,6 +961,14 @@ class Database
                 throw new \InvalidArgumentException('Invalid operator. Supported operators are: ' . implode(', ', $supportedOperators));
             }
 
+            // Ensure where type AND / OR
+            if (!in_array($whereType, ['AND', 'OR'])) {
+                throw new \InvalidArgumentException('Invalid where type. Supported operators are: AND/OR');
+            }
+
+            // Check if variable contains a full SQL statement
+            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in whereDate(). Please use whereRaw() function.');
+
             $this->_buildWhereClause($this->_getDateFunction($column)['date'], $formattedDate, $operator, $whereType);
             return $this;
         } catch (\InvalidArgumentException $e) {
@@ -916,6 +1008,14 @@ class Database
                 throw new \InvalidArgumentException('Invalid operator. Supported operators are: ' . implode(', ', $supportedOperators));
             }
 
+            // Ensure where type AND / OR
+            if (!in_array($whereType, ['AND', 'OR'])) {
+                throw new \InvalidArgumentException('Invalid where type. Supported operators are: AND/OR');
+            }
+
+            // Check if variable contains a full SQL statement
+            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in whereMonth(). Please use whereRaw() function.');
+
             $this->_buildWhereClause($this->_getDateFunction($column)['month'], (int)$month, $operator, $whereType);
             return $this;
         } catch (\InvalidArgumentException $e) {
@@ -940,6 +1040,7 @@ class Database
     public function whereDay($column, $day, $operator = '=', $whereType = 'AND')
     {
         try {
+
             if (!is_string($column)) {
                 throw new \InvalidArgumentException('Invalid column name. Must be a string.');
             }
@@ -953,6 +1054,14 @@ class Database
             if (!in_array($operator, $supportedOperators)) {
                 throw new \InvalidArgumentException('Invalid operator. Supported operators are: ' . implode(', ', $supportedOperators));
             }
+
+            // Ensure where type AND / OR
+            if (!in_array($whereType, ['AND', 'OR'])) {
+                throw new \InvalidArgumentException('Invalid where type. Supported operators are: AND/OR');
+            }
+
+            // Check if variable contains a full SQL statement
+            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in whereDay(). Please use whereRaw() function.');
 
             $this->_buildWhereClause($this->_getDateFunction($column)['day'], (int)$day, $operator, $whereType);
             return $this;
@@ -991,6 +1100,14 @@ class Database
             if (!in_array($operator, $supportedOperators)) {
                 throw new \InvalidArgumentException('Invalid operator. Supported operators are: ' . implode(', ', $supportedOperators));
             }
+
+            // Ensure where type AND / OR
+            if (!in_array($whereType, ['AND', 'OR'])) {
+                throw new \InvalidArgumentException('Invalid where type. Supported operators are: AND/OR');
+            }
+
+            // Check if variable contains a full SQL statement
+            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in whereYear(). Please use whereRaw() function.');
 
             $this->_buildWhereClause($this->_getDateFunction($column)['year'], (int)$year, $operator, $whereType);
             return $this;
@@ -1094,6 +1211,29 @@ class Database
         } else {
             $this->orderBy = "$columns $direction";
         }
+
+        return $this;
+    }
+
+    /**
+     * Set the order by with raw SQL expression.
+     *
+     * @param string $string The raw SQL expression for order by.
+     * @return $this
+     * @throws \InvalidArgumentException If the $string is empty.
+     */
+    public function orderByRaw($string)
+    {
+        // Check if string is empty
+        if (empty($string)) {
+            throw new \InvalidArgumentException('Order by cannot be null in `orderByRaw`.');
+        }
+
+        // Check if orderByRaw contains a full SQL statement
+        $this->_forbidRawQuery($string, 'Full SQL statements are not allowed in `orderByRaw`.');
+
+        // Store the raw order by string
+        $this->orderByRaw = $string;
 
         return $this;
     }
@@ -1636,6 +1776,11 @@ class Database
             $this->_query .= " ORDER BY " . $this->orderBy;
         }
 
+        // Add ORDER BY RAW clause if specified
+        if ($this->orderByRaw) {
+            $this->_query .= (stristr($this->_query, 'ORDER BY') ? ', ' : ' ORDER BY ') . $this->orderByRaw;
+        }
+
         // Add LIMIT clause if specified
         if ($this->limit) {
             switch ($this->driver) {
@@ -1923,6 +2068,30 @@ class Database
     }
 
     # HELPER SECTION
+
+    /**
+     * Validates a raw query string to prevent full SQL statement execution.
+     *
+     * This function ensures the provided string only contains allowed expressions. 
+     * It throws an exception if the string contains keywords associated with full SQL statements like `SELECT`, `INSERT`,
+     * etc.
+     *
+     * @param string|array $string The raw query string to validate.
+     * @param string $message (Optional) The exception message to throw (defaults to "Not supported to run full query").
+     * @throws \InvalidArgumentException If the string contains forbidden keywords.
+     */
+    private function _forbidRawQuery($string, $message = 'Not supported to run full query')
+    {
+        $stringArr = is_string($string) ? [$string] : $string;
+
+        $forbiddenKeywords = '/\b(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|REPLACE|GRANT|REVOKE|SHOW)\b/i';
+
+        foreach ($stringArr as $str) {
+            if (preg_match($forbiddenKeywords, $str)) {
+                throw new \InvalidArgumentException($message);
+            }
+        }
+    }
 
     /**
      * Binds parameters to a prepared statement.

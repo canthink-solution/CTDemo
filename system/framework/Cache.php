@@ -159,7 +159,7 @@ class Cache
             } else {
                 return base64_encode($serializedData);
             }
-        } catch (Exception $e) {
+        } catch (\Exception $e) {
             // Handle the error (log it, notify, etc.)
             return false;
         }
@@ -184,7 +184,7 @@ class Cache
                 $decompressed = base64_decode($compressedData);
             }
             return unserialize($decompressed);
-        } catch (Exception $e) {
+        } catch (\Exception $e) {
             // Handle the error (log it, notify, etc.)
             return false;
         }
