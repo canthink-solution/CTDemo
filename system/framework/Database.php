@@ -1196,14 +1196,12 @@ class Database
         }
 
         if (is_array($columns)) {
-            $orderBy = [];
             foreach ($columns as $column => $dir) {
-                $direction = strtoupper(!in_array(strtoupper($dir), ['ASC', 'DESC']) ? 'DESC' : $dir); // Set default to DESC if is not match 
-                $orderBy[] = "$column $direction";
+                $direction = strtoupper(!in_array(strtoupper($dir), ['ASC', 'DESC']) ? 'DESC' : $dir);
+                $this->orderBy[] = "$column $direction"; // Push to the order by array
             }
-            $this->orderBy = implode(', ', $orderBy);
         } else {
-            $this->orderBy = "$columns $direction";
+            $this->orderBy[] = "$columns $direction"; // Push a single order by clause
         }
 
         return $this;
@@ -1213,10 +1211,11 @@ class Database
      * Set the order by with raw SQL expression.
      *
      * @param string $string The raw SQL expression for order by.
+     * @param array|null $bindParams Optional. An array of parameters to bind to the SQL statement.
      * @return $this
      * @throws \InvalidArgumentException If the $string is empty.
      */
-    public function orderByRaw($string)
+    public function orderByRaw($string, $bindParams = null)
     {
         // Check if string is empty
         if (empty($string)) {
@@ -1227,7 +1226,15 @@ class Database
         $this->_forbidRawQuery($string, 'Full SQL statements are not allowed in `orderByRaw`.');
 
         // Store the raw order by string
-        $this->orderBy = $string;
+        $this->orderBy[] = $string;
+
+        if (!empty($bindParams)) {
+            if (is_array($bindParams)) {
+                $this->_binds = array_merge($this->_binds, $bindParams);
+            } else {
+                $this->_binds[] = $bindParams;
+            }
+        }
 
         return $this;
     }
@@ -1601,7 +1608,7 @@ class Database
             $paginate['data'] = $this->_processEagerLoading($paginate['data'], $_temp_relations, $_temp_connection, 'get');
         }
 
-        $_temp_connection = $_temp_relations = NULL;
+        unset($_temp_connection, $_temp_relations);
 
         return $paginate;
     }
@@ -1765,8 +1772,11 @@ class Database
             $this->_query .= " GROUP BY " . $this->groupBy;
         }
 
-        // Add ORDER BY RAW clause if specified
-        $this->_query .= " ORDER BY " . $this->orderBy;
+        // Add ORDER BY clause if specified
+        if ($this->orderBy) {
+            $orderBy = implode(', ', $this->orderBy);
+            $this->_query .= " ORDER BY " . $orderBy;
+        }
 
         // Add LIMIT clause if specified
         if ($this->limit) {
@@ -1798,41 +1808,6 @@ class Database
         $this->_query = $this->_expandAsterisksInQuery($this->_query);
 
         return $this;
-    }
-
-    /**
-     * Sanitize input data to prevent XSS and SQL injection attacks based on the secure flag.
-     *
-     * @param mixed $value The input data to sanitize.
-     * @return mixed|null The sanitized input data or null if $value is null or empty.
-     */
-    protected function sanitize($value = null)
-    {
-        // Check if $value is not null or empty
-        if (!isset($value) || is_null($value)) {
-            return $value;
-        }
-
-        // Check if secure mode is enabled
-        if ($this->_secure) {
-            // Sanitize input to prevent XSS
-            if (is_array($value)) {
-                // Sanitize each value in the array
-                foreach ($value as &$val) {
-                    // Check if $val is not null and not empty, and not equal to 0
-                    if (!is_null($val) && !empty($val) && !is_integer($val)) {
-                        $val = htmlspecialchars(trim($val), ENT_QUOTES, 'UTF-8'); // Apply XSS protection to $val
-                    }
-                }
-                return $value;
-            } else {
-                // Sanitize a single value
-                return htmlspecialchars(trim($value), ENT_QUOTES, 'UTF-8');
-            }
-        } else {
-            // Return input as-is if secure mode is disabled
-            return $value;
-        }
     }
 
     /**
@@ -2057,6 +2032,83 @@ class Database
     # HELPER SECTION
 
     /**
+     * Begin a transaction.
+     *
+     * @return void
+     */
+    public function beginTransaction()
+    {
+        $this->pdo[$this->connectionName]->beginTransaction();
+    }
+
+    /**
+     * Commit a transaction.
+     *
+     * @return void
+     */
+    public function commit()
+    {
+        $this->pdo[$this->connectionName]->commit();
+    }
+
+    /**
+     * Rollback a transaction.
+     *
+     * @return void
+     */
+    public function rollback()
+    {
+        $this->pdo[$this->connectionName]->rollBack();
+    }
+
+    /**
+     * Caches data with an expiration time.
+     *
+     * This method sets a cache entry identified by the provided key with optional expiration time.
+     *
+     * @param string $key The unique key identifying the cache entry.
+     * @param int $expire The expiration time of the cache entry in seconds (default: 1800 seconds).
+     * @return $this Returns the current object instance for method chaining.
+     */
+    public function cache($key, $expire = 1800)
+    {
+        $this->cacheFile = $key;
+        $this->cacheFileExpired = $expire;
+
+        return $this;
+    }
+
+    /**
+     * Retrieves cached data for the given key.
+     *
+     * This method retrieves cached data identified by the provided key using the Cache class.
+     *
+     * @param string $key The unique key identifying the cached data.
+     * @return mixed|null Returns the cached data if found; otherwise, returns null.
+     */
+    private function _getCacheData($key)
+    {
+        $cache = new Cache();
+        return $cache->get($key);
+    }
+
+    /**
+     * Stores data in the cache with an optional expiration time.
+     *
+     * This method stores data identified by the provided key in the cache using the Cache class.
+     *
+     * @param string $key The unique key identifying the cache entry.
+     * @param mixed $data The data to be stored in the cache.
+     * @param int $expire The expiration time of the cache entry in seconds (default: 1800 seconds).
+     * @return bool Returns true on success, false on failure.
+     */
+    private function _setCacheData($key, $data, $expire = 1800)
+    {
+        $cache = new Cache();
+        return $cache->set($key, $data, $expire);
+    }
+
+    /**
      * Validates a raw query string to prevent full SQL statement execution.
      *
      * This function ensures the provided string only contains allowed expressions. 
@@ -2156,7 +2208,7 @@ class Database
             $hasNamed = preg_match('/:\w+/', $query);
 
             foreach ($binds as $key => $value) {
-                $quotedValue = is_numeric($value) ? $value : $this->pdo[$this->connectionName]->quote($value);
+                $quotedValue = is_numeric($value) ? $value : htmlspecialchars($value);
 
                 if ($hasPositional) {
                     // Positional parameter: replace with quoted value
@@ -2321,52 +2373,5 @@ class Database
             default:
                 throw new \InvalidArgumentException("Unsupported database type: " . $this->driver);
         }
-    }
-
-    /**
-     * Caches data with an expiration time.
-     *
-     * This method sets a cache entry identified by the provided key with optional expiration time.
-     *
-     * @param string $key The unique key identifying the cache entry.
-     * @param int $expire The expiration time of the cache entry in seconds (default: 1800 seconds).
-     * @return $this Returns the current object instance for method chaining.
-     */
-    public function cache($key, $expire = 1800)
-    {
-        $this->cacheFile = $key;
-        $this->cacheFileExpired = $expire;
-
-        return $this;
-    }
-
-    /**
-     * Retrieves cached data for the given key.
-     *
-     * This method retrieves cached data identified by the provided key using the Cache class.
-     *
-     * @param string $key The unique key identifying the cached data.
-     * @return mixed|null Returns the cached data if found; otherwise, returns null.
-     */
-    private function _getCacheData($key)
-    {
-        $cache = new Cache();
-        return $cache->get($key);
-    }
-
-    /**
-     * Stores data in the cache with an optional expiration time.
-     *
-     * This method stores data identified by the provided key in the cache using the Cache class.
-     *
-     * @param string $key The unique key identifying the cache entry.
-     * @param mixed $data The data to be stored in the cache.
-     * @param int $expire The expiration time of the cache entry in seconds (default: 1800 seconds).
-     * @return bool Returns true on success, false on failure.
-     */
-    private function _setCacheData($key, $data, $expire = 1800)
-    {
-        $cache = new Cache();
-        return $cache->set($key, $data, $expire);
     }
 }
