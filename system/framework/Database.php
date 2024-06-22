@@ -120,6 +120,11 @@ class Database
     protected $_profiler = [];
 
     /**
+     * @var string An string to store current active profiler
+     */
+    protected $_profilerActive = 'main';
+
+    /**
      * @var string|null The cache key.
      */
     protected $cacheFile = null;
@@ -342,7 +347,7 @@ class Database
     public function rawQuery($query, $bindParams = null, $fetch = 'get')
     {
         $this->_startProfiler(__FUNCTION__);
-        $this->_profiler['binds'] = []; // Initialize the binds array
+        $this->_profiler['profiling'][$this->_profilerActive]['binds'] = []; // Initialize the binds array
         try {
             // Expand asterisks in query
             $query = $this->_expandAsterisksInQuery($query);
@@ -440,6 +445,7 @@ class Database
         $this->relations = [];
         $this->cacheFile = null;
         $this->cacheFileExpired = 1800;
+        $this->_profilerActive = 'main';
 
         return $this;
     }
@@ -1321,14 +1327,15 @@ class Database
     {
         $result = null;
 
+        // Build the final SELECT query string
+        $this->_buildSelectQuery();
+
+        $cachePrefix = 'get_';
         if (!empty($this->cacheFile)) {
-            $result = $this->_getCacheData($this->cacheFile);
+            $result = $this->_getCacheData($cachePrefix . $this->cacheFile);
         }
 
         if (empty($result)) {
-
-            // Build the final SELECT query string
-            $this->_buildSelectQuery();
 
             // Start profiler for performance measurement 
             $this->_startProfiler(__FUNCTION__);
@@ -1343,7 +1350,7 @@ class Database
 
             try {
                 // Log the query for debugging 
-                $this->_profiler['query'] = $this->_query;
+                $this->_profiler['profiling'][$this->_profilerActive]['query'] = $this->_query;
 
                 // Generate the full query string with bound values 
                 $this->_generateFullQuery($this->_query, $this->_binds);
@@ -1377,10 +1384,10 @@ class Database
             }
 
             if (!empty($_temp_cacheKey) && !empty($result)) {
-                $this->_setCacheData($_temp_cacheKey, $result, $_temp_cacheExpired);
+                $this->_setCacheData($cachePrefix . $_temp_cacheKey, $result, $_temp_cacheExpired);
             }
 
-            unset($_temp_connection, $_temp_relations, $_temp_cacheKey, $_temp_cacheExpired);
+            unset($_temp_connection, $_temp_relations, $_temp_cacheKey, $_temp_cacheExpired, $cachePrefix);
         }
 
         return $result;
@@ -1400,16 +1407,18 @@ class Database
     {
         $result = null;
 
+        // Set limit to 1 to ensure only 1 data return
+        $this->limit(1);
+
+        // Build the final SELECT query string
+        $this->_buildSelectQuery();
+
+        $cachePrefix = 'fetch_';
         if (!empty($this->cacheFile)) {
-            $result = $this->_getCacheData($this->cacheFile);
+            $result = $this->_getCacheData($cachePrefix . $this->cacheFile);
         }
 
         if (empty($result)) {
-            // Set limit to 1 to ensure only 1 data return
-            $this->limit(1);
-
-            // Build the final SELECT query string
-            $this->_buildSelectQuery();
 
             // Start profiler for performance measurement
             $this->_startProfiler(__FUNCTION__);
@@ -1424,7 +1433,7 @@ class Database
 
             try {
                 // Log the query for debugging
-                $this->_profiler['query'] = $this->_query;
+                $this->_profiler['profiling'][$this->_profilerActive]['query'] = $this->_query;
 
                 // Generate the full query string with bound values
                 $this->_generateFullQuery($this->_query, $this->_binds);
@@ -1458,10 +1467,10 @@ class Database
             }
 
             if (!empty($_temp_cacheKey) && !empty($result)) {
-                $this->_setCacheData($_temp_cacheKey, $result, $_temp_cacheExpired);
+                $this->_setCacheData($cachePrefix . $_temp_cacheKey, $result, $_temp_cacheExpired);
             }
 
-            unset($_temp_connection, $_temp_relations, $_temp_cacheKey, $_temp_cacheExpired);
+            unset($_temp_connection, $_temp_relations, $_temp_cacheKey, $_temp_cacheExpired, $cachePrefix);
         }
 
         // Return the first result or null if not found
@@ -1495,34 +1504,8 @@ class Database
             // Calculate offset
             $offset = ($currentPage - 1) * $limit;
 
-            // Create a separate query to get total count
-            switch ($this->driver) {
-                case 'mysql':
-                case 'pgsql':
-                case 'oracle':
-                case 'oci':
-                    $sqlTotal = 'SELECT COUNT(*) count ' . substr($this->_query, strpos($this->_query, 'FROM'));
-                    break;
-                case 'mssql':
-                    $sqlTotal = 'SELECT COUNT(*) count FROM (' . $this->_query . ') AS subquery';
-                    break;
-                default:
-                    throw new \Exception('Unsupported database driver for paginate()');
-            }
-
-            // Execute the total count query
-            $stmtTotal = $this->pdo[$this->connectionName]->prepare($sqlTotal);
-
-            // Bind parameters if any
-            if (!empty($this->_binds)) {
-                $this->_bindParams($stmtTotal, $this->_binds);
-            }
-
-            $stmtTotal->execute();
-            $totalResult = $stmtTotal->fetch(\PDO::FETCH_ASSOC);
-
             // Get total count
-            $total = $totalResult['count'];
+            $total = $this->count();
 
             // Calculate total pages
             $totalPages = ceil($total / $limit);
@@ -1552,7 +1535,7 @@ class Database
             }
 
             // Log the query for debugging 
-            $this->_profiler['query'] = $this->_query;
+            $this->_profiler['profiling'][$this->_profilerActive]['query'] = $this->_query;
 
             // Generate the full query string with bound values 
             $this->_generateFullQuery($this->_query, $this->_binds);
@@ -1585,7 +1568,7 @@ class Database
                 'next_page' => $nextPage,
                 'previous_page' => $previousPage,
                 'last_page' => $totalPages,
-                'error' => ''
+                'error' => $currentPage > $totalPages ? "current page ({$currentPage}) is more than total page ({$totalPages})" : ''
             ];
         } catch (\PDOException $e) {
             // Log database errors
@@ -1611,6 +1594,64 @@ class Database
         unset($_temp_connection, $_temp_relations);
 
         return $paginate;
+    }
+
+    /**
+     * Retrieves the total count of rows that would be returned by the current query.
+     *
+     * This function executes a separate query based on the current state of `$this->_query` to efficiently calculate the total number of rows without fetching the actual data.
+     * The `ORDER BY` clause (if present) is removed from the query for accurate counting.
+     * 
+     * @return int The total number of rows that would be returned by the current query.
+     * @throws \PDOException If there's an error accessing the database.
+     */
+    public function count()
+    {
+        try {
+
+            // Start profiler for performance measurement
+            $this->_startProfiler(__FUNCTION__);
+
+            // Check if query is empty then generate it first.
+            if (empty($this->_query)) {
+                $this->_buildSelectQuery();
+            }
+
+            // Create a separate query to get total count
+            switch ($this->driver) {
+                case 'mysql':
+                case 'pgsql':
+                case 'oracle':
+                case 'oci':
+                    $sqlTotal = 'SELECT COUNT(*) count ' . preg_replace('/\s+ORDER BY\s+.*?(?=\s+LIMIT|\s+OFFSET|\s+GROUP BY|$)/i', '', substr($this->_query, strpos($this->_query, 'FROM')));
+                    break;
+                case 'mssql':
+                    $sqlTotal = 'SELECT COUNT(*) count FROM (' . preg_replace('/\s+ORDER BY\s+.*?(?=\s+LIMIT|\s+OFFSET|\s+GROUP BY|$)/i', '', $this->_query) . ') AS subquery';
+                    break;
+                default:
+                    throw new \Exception('Unsupported database driver for count()');
+            }
+
+            // Execute the total count query
+            $stmtTotal = $this->pdo[$this->connectionName]->prepare($sqlTotal);
+
+            // Bind parameters if any
+            if (!empty($this->_binds)) {
+                $this->_bindParams($stmtTotal, $this->_binds);
+            }
+
+            $stmtTotal->execute();
+            $totalResult = $stmtTotal->fetch(\PDO::FETCH_ASSOC);
+
+            // Stop profiler
+            $this->_stopProfiler();
+
+            return $totalResult['count'] ?? 0;
+        } catch (\PDOException $e) {
+            // Log database errors
+            $this->db_error_log($e, __FUNCTION__);
+            throw $e; // Re-throw the exception
+        }
     }
 
     /**
@@ -1647,7 +1688,9 @@ class Database
             $this->_binds = $_tempBinds;
             $this->relations = $_tempRelation;
 
+            
             $this->limit($size)->offset($offset);
+            $this->_setProfilerIdentifier('chunk_size' . $size . '_offset' . $offset);
             $results = $this->get();
 
             if (empty($results)) {
@@ -1863,6 +1906,9 @@ class Database
                     $callback($relatedRecordsQuery);
                 }
 
+                // Set profiler
+                $this->_setProfilerIdentifier('with_' . $alias);
+
                 // Fetch data 
                 $relatedRecords = $relatedRecordsQuery->get();
 
@@ -1900,13 +1946,16 @@ class Database
         // Initialize an empty array to store all related records
         $allRelatedRecords = [];
 
-        foreach ($chunks as $chunk) {
+        foreach ($chunks as $key => $chunk) {
             $relatedRecordsQuery = $connectionObj->table($table)->whereIn($fk_id, $chunk);
 
             // Apply callback if provided for customization
             if ($callback instanceof \Closure) {
                 $callback($relatedRecordsQuery);
             }
+
+            // Set profiler
+            $this->_setProfilerIdentifier('with_' . $alias . '_' . ($key + 1));
 
             // Fetch data 
             $chunkRelatedRecords = $relatedRecordsQuery->get();
@@ -1962,6 +2011,28 @@ class Database
     }
 
     /**
+     * Sets the active profiler identifier.
+     *
+     * This function allows you to designate a specific profiler instance within the
+     * `_profilers` array to be used for subsequent profiling operations. By
+     * default, the profiler with the identifier 'main' is activated.
+     *
+     * Using this function enables you to manage and track data for multiple concurrent
+     * profiling sessions within your application.
+     *
+     * @param string $identifier (optional) A unique identifier for the profiler to activate.
+     *                             Defaults to 'main' if not provided.
+     *
+     * @return string The currently active profiler identifier.
+     *
+     */
+    private function _setProfilerIdentifier($identifier = 'main')
+    {
+        $this->_profilerActive = $identifier;
+        return $this->_profilerActive;
+    }
+
+    /**
      * Starts the profiler for a specific method.
      *
      * This function initializes the profiler data structure when a query building
@@ -1972,7 +2043,27 @@ class Database
     private function _startProfiler($method)
     {
         $startTime = microtime(true);
-        $this->_profiler = [
+
+        // Get PHP version
+        $this->_profiler['php'] = phpversion();  // Simpler approach for version string
+
+        // Get OS version
+        if (function_exists('php_uname')) {
+            $this->_profiler['os'] = php_uname('s') . ' ' . php_uname('r');  // OS and release
+        } else {
+            // Handle cases where php_uname is not available
+            $this->_profiler['os'] = 'Unknown';
+        }
+
+        // Get database version (assuming a PDO connection)
+        if (isset($this->pdo[$this->connectionName]) && $this->pdo[$this->connectionName] instanceof \PDO) {
+            $this->_profiler['database'] = $this->pdo[$this->connectionName]->getAttribute(\PDO::ATTR_SERVER_VERSION);
+        } else {
+            // Handle cases where no database connection exists
+            $this->_profiler['database'] = 'Unknown';
+        }
+
+        $this->_profiler['profiling'][$this->_profilerActive] = [
             'method' => $method,
             'start' => $startTime,
             'start_formatted' => date('Y-m-d h:i A', (int) $startTime),
@@ -1993,17 +2084,22 @@ class Database
      * This function is called after query execution. It calculates the execution
      * time, formats it, and sets the execution status based on predefined thresholds.
      * It also updates the profiler data with end time, formatted end time, execution time, and status.
+     * 
      */
     private function _stopProfiler()
     {
+        if (!isset($this->_profiler['profiling'][$this->_profilerActive])) {
+            return;  // Profiler not started
+        }
+
         $endTime = microtime(true);
-        $executionTime = $endTime - $this->_profiler['start'];
+        $executionTime = $endTime - $this->_profiler['profiling'][$this->_profilerActive]['start'];
 
-        $this->_profiler['memory_usage'] = $this->_formatBytes(memory_get_usage() - $this->_profiler['memory_usage'], 2);
-        $this->_profiler['memory_usage_peak'] = $this->_formatBytes(memory_get_peak_usage() - $this->_profiler['memory_usage_peak'], 4);
+        $this->_profiler['profiling'][$this->_profilerActive]['memory_usage'] = $this->_formatBytes(memory_get_usage() - $this->_profiler['profiling'][$this->_profilerActive]['memory_usage'], 2);
+        $this->_profiler['profiling'][$this->_profilerActive]['memory_usage_peak'] = $this->_formatBytes(memory_get_peak_usage() - $this->_profiler['profiling'][$this->_profilerActive]['memory_usage_peak'], 4);
 
-        $this->_profiler['end'] = $endTime;
-        $this->_profiler['end_formatted'] = date('Y-m-d h:i A', (int) $endTime);
+        $this->_profiler['profiling'][$this->_profilerActive]['end'] = $endTime;
+        $this->_profiler['profiling'][$this->_profilerActive]['end_formatted'] = date('Y-m-d h:i A', (int) $endTime);
 
         // Calculate and format execution time with milliseconds
         $milliseconds = round(($executionTime - floor($executionTime)) * 1000, 2);
@@ -2023,10 +2119,21 @@ class Database
             $formattedExecutionTime = sprintf("%ds %dms", $seconds, $milliseconds);
         }
 
-        $this->_profiler['execution_time'] = $formattedExecutionTime;
+        $this->_profiler['profiling'][$this->_profilerActive]['execution_time'] = $formattedExecutionTime;
+        $this->_profiler['stack_trace'] = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 8); // Capture starting stack trace
 
         // Set execution status based on predefined thresholds
-        $this->_profiler['status'] = ($executionTime >= 3.5) ? 'very slow' : (($executionTime >= 1.5 && $executionTime < 3.5) ? 'slow' : (($executionTime > 0.5 && $executionTime < 1.49) ? 'fast' : 'very fast'));
+        $this->_profiler['profiling'][$this->_profilerActive]['status'] = ($executionTime >= 3.5) ? 'very slow' : (($executionTime >= 1.5 && $executionTime < 3.5) ? 'slow' : (($executionTime > 0.5 && $executionTime < 1.49) ? 'fast' : 'very fast'));
+
+        // Removed unused profiler from being display & free resources
+        unset(
+            $endTime,
+            $executionTime,
+            $formattedExecutionTime,
+            $this->_profiler['profiling'][$this->_profilerActive]['binds'],
+            $this->_profiler['profiling'][$this->_profilerActive]['start'],
+            $this->_profiler['profiling'][$this->_profilerActive]['end'],
+        );
     }
 
     # HELPER SECTION
@@ -2155,7 +2262,7 @@ class Database
 
         // Reset
         $this->_binds = [];
-        $this->_profiler['binds'] = [];
+        $this->_profiler['profiling'][$this->_profilerActive]['binds'] = [];
 
         foreach ($binds as $key => $value) {
 
@@ -2182,7 +2289,7 @@ class Database
             }
 
             $this->_binds[] = $value;
-            $this->_profiler['binds'][] = $value; // Record only the value
+            $this->_profiler['profiling'][$this->_profilerActive]['binds'][] = $value; // Record only the value
         }
     }
 
@@ -2208,7 +2315,7 @@ class Database
             $hasNamed = preg_match('/:\w+/', $query);
 
             foreach ($binds as $key => $value) {
-                $quotedValue = is_numeric($value) ? $value : htmlspecialchars($value);
+                $quotedValue = is_numeric($value) ? $value : htmlspecialchars($value ?? '');
 
                 if ($hasPositional) {
                     // Positional parameter: replace with quoted value
@@ -2226,7 +2333,7 @@ class Database
             }
         }
 
-        $this->_profiler['full_query'] = $query;
+        $this->_profiler['profiling'][$this->_profilerActive]['full_query'] = $query;
 
         return $this;
     }
