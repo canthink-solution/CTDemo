@@ -10,7 +10,7 @@ namespace Sys\framework;
  * @author    Mohd Fahmy Izwan Zulkhafri <faizzul14@gmail.com>
  * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @link      -
- * @version   0.1.3
+ * @version   0.1.35
  */
 
 use Sys\framework\Cache;
@@ -133,6 +133,26 @@ class Database
      * @var string|integer The cache to expire in seconds.
      */
     protected $cacheFileExpired = 1800;
+
+    /**
+     * @var bool Whether parallel processing is enabled.
+     */
+    protected $_parallelEnabled = true;
+
+    /**
+     * @var int The number of worker processes to use for parallel processing (if enabled).
+     */
+    protected $_parallelWorker = 3;
+
+    /**
+     * @var float The duration (in seconds) to sleep before next processing.
+     */
+    protected $_parallelSleep = 1;
+
+    /**
+     * @var int The number of tasks to process in a batch during parallel processing for eager loader.
+     */
+    protected $_parallelBatchSize = 1000;
 
     /**
      * Constructor.
@@ -1688,9 +1708,9 @@ class Database
             $this->_binds = $_tempBinds;
             $this->relations = $_tempRelation;
 
-            
-            $this->limit($size)->offset($offset);
             $this->_setProfilerIdentifier('chunk_size' . $size . '_offset' . $offset);
+
+            $this->limit($size)->offset($offset);
             $results = $this->get();
 
             if (empty($results)) {
@@ -1894,23 +1914,14 @@ class Database
             $primaryKeys = array_values(array_unique(array_column($data, $pk_id), SORT_REGULAR));
 
             // Check if batch processing is needed
-            $batchSize = 1000; // Adjust this threshold as needed
-            if (count($primaryKeys) > $batchSize) {
-                $this->_processEagerLoadingInBatches($data, $primaryKeys, $batchSize, $table, $fk_id, $pk_id, $connectionName, $method, $alias, $callback);
+            if (count($primaryKeys) > $this->_parallelBatchSize) {
+                $this->_processEagerLoadingInBatches($data, $primaryKeys, $table, $fk_id, $pk_id, $connectionName, $method, $alias, $callback);
             } else {
-                // Fetch related records using a single query
-                $relatedRecordsQuery = $connectionObj->table($table)->whereIn($fk_id, $primaryKeys);
-
-                // Apply callback if provided for customization
-                if ($callback instanceof \Closure) {
-                    $callback($relatedRecordsQuery);
-                }
-
                 // Set profiler
                 $this->_setProfilerIdentifier('with_' . $alias);
 
-                // Fetch data 
-                $relatedRecords = $relatedRecordsQuery->get();
+                // Process directly without parallelism
+                $relatedRecords = $this->_processEagerByChunk($primaryKeys, $callback, $connectionObj, $table, $fk_id);
 
                 // Logic to process and attach data to main/subquery data
                 $this->attachEagerLoadedData($method, $data, $relatedRecords, $alias, $fk_id, $pk_id);
@@ -1928,7 +1939,6 @@ class Database
      *
      * @param array $data The main result data.
      * @param array $primaryKeys The array of primary keys from the main data.
-     * @param int $batchSize The maximum number of primary keys per batch.
      * @param string $table The related table name.
      * @param string $fk_id The foreign key column in the related table.
      * @param string $pk_id The local key column in the current table.
@@ -1937,35 +1947,56 @@ class Database
      * @param string $alias The alias for the relationship.
      * @param Closure|null $callback An optional callback to customize the query.
      */
-    private function _processEagerLoadingInBatches(&$data, $primaryKeys, $batchSize, $table, $fk_id, $pk_id, $connectionName, $method, $alias, \Closure $callback = null)
+    private function _processEagerLoadingInBatches(&$data, $primaryKeys, $table, $fk_id, $pk_id, $connectionName, $method, $alias, \Closure $callback = null)
     {
         $connectionObj = Database::$_instance->connection($connectionName);
 
-        $chunks = array_chunk($primaryKeys, $batchSize);
+        $chunks = array_chunk($primaryKeys, $this->_parallelBatchSize);
 
         // Initialize an empty array to store all related records
         $allRelatedRecords = [];
 
-        foreach ($chunks as $key => $chunk) {
-            $relatedRecordsQuery = $connectionObj->table($table)->whereIn($fk_id, $chunk);
+        // Check if parallel is enabled and total $chunks more than total that need parallel to handle
+        if ($this->_parallelEnabled && count($chunks) > $this->_parallelWorker) {
+            die('Parallel mode using proc_open is not ready.');
+        } else {
+            foreach ($chunks as $key => $chunk) {
 
-            // Apply callback if provided for customization
-            if ($callback instanceof \Closure) {
-                $callback($relatedRecordsQuery);
+                // Set profiler
+                $this->_setProfilerIdentifier('with_' . $alias . '_' . ($key + 1));
+
+                // Process chunk directly without parallelism
+                $chunkRelatedRecords = $this->_processEagerByChunk($chunk, $callback, $connectionObj, $table, $fk_id);
+
+                // Merge chunk results into the allRelatedRecords array
+                $allRelatedRecords = array_merge($allRelatedRecords, $chunkRelatedRecords);
             }
-
-            // Set profiler
-            $this->_setProfilerIdentifier('with_' . $alias . '_' . ($key + 1));
-
-            // Fetch data 
-            $chunkRelatedRecords = $relatedRecordsQuery->get();
-
-            // Merge chunk results into the allRelatedRecords array
-            $allRelatedRecords = array_merge($allRelatedRecords, $chunkRelatedRecords);
         }
 
         // Attach related data to the main data
         $this->attachEagerLoadedData($method, $data, $allRelatedRecords, $alias, $fk_id, $pk_id);
+    }
+
+    /**
+     * Process a chunk of primary keys and return related records.
+     *
+     * @param array $chunk The chunk of primary keys to process.
+     * @param \Closure|null $callback An optional callback to customize the query.
+     * @param Object $connectionObj The database connection object.
+     * @param string $table The related table name.
+     * @param string $fk_id The foreign key column in the related table.
+     * @return array The related records fetched for the chunk.
+     */
+    private function _processEagerByChunk($chunk, \Closure $callback = null, $connectionObj, $table, $fk_id)
+    {
+        $relatedRecordsQuery = $connectionObj->table($table)->whereIn($fk_id, $chunk);
+
+        // Apply callback if provided for customization
+        if ($callback instanceof \Closure) {
+            $callback($relatedRecordsQuery);
+        }
+
+        return $relatedRecordsQuery->get();
     }
 
     /**
