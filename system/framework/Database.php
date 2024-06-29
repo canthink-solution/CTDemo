@@ -137,7 +137,7 @@ class Database
     /**
      * @var bool Whether parallel processing is enabled.
      */
-    protected $_parallelEnabled = true;
+    protected $_parallelEnabled = false;
 
     /**
      * @var int The number of worker processes to use for parallel processing (if enabled).
@@ -553,7 +553,7 @@ class Database
     {
         try {
 
-            if (!is_string($columnName) && !is_array($columnName)) {
+            if (!is_callable($columnName) && !is_string($columnName) && !is_array($columnName)) {
                 throw new \InvalidArgumentException('Invalid column name. Must be a string or an associative array.');
             }
 
@@ -566,6 +566,24 @@ class Database
             // Ensure where type AND / OR
             if (!in_array($whereType, ['AND', 'OR'])) {
                 throw new \InvalidArgumentException('Invalid where type. Supported operators are: AND/OR');
+            }
+
+            if (is_callable($columnName)) {
+                $db = clone $this; // Clone current query builder instance
+                $db->reset(); // reset all variable
+                $columnName($db); // Pass the current object to the closure
+
+                if (!empty($db->where) && is_string($db->where)) {
+                    // Check if variable contains a full SQL statement
+                    $this->_forbidRawQuery($db->where, 'Full/Sub SQL statements are not allowed in where(). Please use whereRaw() function.');
+
+                    $this->whereRaw($db->where, $db->_binds, $whereType);
+                } else {
+                    throw new \InvalidArgumentException('Callable must return a valid SQL clause string.');
+                }
+
+                unset($db);
+                return $this;
             }
 
             // Check if variable contains a full SQL statement
@@ -607,7 +625,7 @@ class Database
     {
         try {
 
-            if (!is_string($columnName) && !is_array($columnName)) {
+            if (!is_callable($columnName) && !is_string($columnName) && !is_array($columnName)) {
                 throw new \InvalidArgumentException('Invalid column name. Must be a string or an associative array.');
             }
 
@@ -622,8 +640,26 @@ class Database
                 throw new \InvalidArgumentException('Invalid where type. Supported operators are: AND/OR');
             }
 
+            if (is_callable($columnName)) {
+                $db = clone $this; // Clone current query builder instance
+                $db->reset(); // reset all variable
+                $columnName($db); // Pass the current object to the closure
+
+                if (!empty($db->where) && is_string($db->where)) {
+                    // Check if variable contains a full SQL statement
+                    $this->_forbidRawQuery($db->where, 'Full/Sub SQL statements are not allowed in orWhere(). Please use whereRaw() function.');
+
+                    $this->whereRaw($db->where, $db->_binds, $whereType);
+                } else {
+                    throw new \InvalidArgumentException('Callable must return a valid SQL clause string.');
+                }
+
+                unset($db);
+                return $this;
+            }
+
             // Check if variable contains a full SQL statement
-            $this->_forbidRawQuery([$columnName, $value], 'Full/Sub SQL statements are not allowed in orWere(). Please use whereRaw() function.');
+            $this->_forbidRawQuery([$columnName, $value], 'Full/Sub SQL statements are not allowed in orWhere(). Please use whereRaw() function.');
 
             if (is_array($columnName)) {
                 foreach ($columnName as $column => $val) {
@@ -1873,6 +1909,225 @@ class Database
         return $this;
     }
 
+    # CRUD OPERATION
+
+    # CREATE DATA OPERATION
+
+    /**
+     * Inserts data into a database table.
+     *
+     * This function takes an associative array of data as input and attempts to insert it into the database table specified by the class property `$this->table`.
+     *
+     * @param array $data The associative array of data to be inserted. Keys represent column names, and values represent the data to be inserted into those columns.
+     *
+     * @throws InvalidArgumentException  - Thrown if the provided data is empty, not an associative array, or if the `$this->table` property is not set.
+     * @throws PDOException              - Thrown if a database error occurs during the insertion process.
+     *
+     * @return array                    An associative array containing information about the insertion operation. 
+     *                                  - 'code': HTTP status code (201 for success, 422 for failure)
+     *                                  - 'id': The ID of the newly inserted row (if successful)
+     *                                  - 'message': A message indicating success or failure
+     *                                  - 'data': The sanitized data that was attempted to be inserted
+     * 
+     *                                  - Returns `false` if no insertion was attempted due to invalid data or missing table specification.
+     */
+    public function insert($data)
+    {
+        // Check if string is empty
+        if (empty($data) || !is_array($data)) {
+            throw new \InvalidArgumentException('Invalid column data. Must be a associative array.');
+        }
+
+        if (empty($this->table)) {
+            throw new \InvalidArgumentException('Please specify the table.');
+        }
+
+        // Start profiler for performance measurement 
+        $this->_startProfiler(__FUNCTION__);
+
+        // sanitize column to ensure column is exists.
+        $sanitizeData = $this->sanitizeColumn($data);
+
+        // Build the final INSERT query string
+        $this->_buildInsertQuery($sanitizeData);
+
+        // Prepare the query statement
+        $stmt = $this->pdo[$this->connectionName]->prepare($this->_query);
+
+        try {
+            // Log the query for debugging 
+            $this->_profiler['profiling'][$this->_profilerActive]['query'] = $this->_query;
+
+            // Generate the full query string with bound values 
+            $this->_generateFullQuery($this->_query, $this->_binds);
+
+            // Execute the statement
+            $success = $stmt->execute($this->_binds);
+
+            // Get the number of affected rows
+            $affectedRows = $stmt->rowCount();
+
+            // Get the last inserted ID
+            $lastInsertId = $success ? $this->pdo[$this->connectionName]->lastInsertId() : null;
+
+            // Return information about the insertion operation
+            $result = [
+                'code' => $success ? 201 : 422,
+                'id' => $lastInsertId,
+                'message' => $success ? 'Data inserted successfully' : 'Failed to insert data',
+                'data' => $sanitizeData,
+            ];
+        } catch (\PDOException $e) {
+            // Log database errors
+            $this->db_error_log($e, __FUNCTION__);
+            throw $e; // Re-throw the exception
+        }
+
+        // Stop profiler 
+        $this->_stopProfiler();
+
+        // Reset internal properties for next query
+        $this->reset();
+
+        return $result ?? false;
+    }
+
+    /**
+     * Builds the SQL INSERT query string based on provided data.
+     *
+     * This internal function is used by the `insert` function to construct the SQL statement for inserting data into a database table. 
+     * It takes the data array as input and builds the INSERT query with column names, placeholders for values, and the table name.
+     *
+     * @param array $data The associative array containing the data to be inserted. Keys represent column names, and values represent the data for those columns.
+     *
+     * @access private
+     *
+     * @return $this This object instance (used for method chaining).
+     */
+    private function _buildInsertQuery($data)
+    {
+        // Construct column names string
+        $columns = implode(', ', array_keys($data));
+
+        // Construct placeholders for values
+        $placeholders = implode(', ', array_fill(0, count($data), '?'));
+
+        // Construct the SQL insert statement
+        $this->_query = "INSERT INTO ";
+
+        // Append table name with schema (if provided)
+        if (empty($this->schema)) {
+            $this->_query .= "`$this->table` ($columns)";
+        } else {
+            $this->_query .= "`$this->schema`.`$this->table` ($columns)";
+        }
+
+        $this->_query .= " VALUES ($placeholders)";
+        $this->_binds = array_values($data); // Extract values from $data
+
+        return $this;
+    }
+
+    # DELETE DATA OPERATION
+
+    /**
+     * Deletes records from the database based on the previously configured criteria.
+     *
+     * This function executes a DELETE query against the database table associated with the object.
+     * It returns an associative array containing information about the deletion operation,
+     * including the success status, number of affected rows, and optional deleted data.
+     *
+     * @throws \PDOException If a database error occurs during the deletion process.
+     *
+     * @return array An associative array with the following keys:
+     *   - code: HTTP status code (200 for success, 422 for failure)
+     *   - affected_rows: The number of rows affected by the DELETE query
+     *   - message: A human-readable message indicating success or failure
+     *   - data (optional): An array containing the data of the deleted records (if retrieved beforehand)
+     */
+    public function delete()
+    {
+        // Build to get all the data before delete
+        $newDb = clone $this;
+        $deletedData = $newDb->get();
+        unset($newDb); // remove to free memory
+
+        // Start profiler for performance measurement 
+        $this->_startProfiler(__FUNCTION__);
+
+        // Build the final DELETE query string
+        $this->_buildDeleteQuery();
+
+        // Prepare the query statement
+        $stmt = $this->pdo[$this->connectionName]->prepare($this->_query);
+
+        // Bind parameters if any
+        if (!empty($this->_binds)) {
+            $this->_bindParams($stmt, $this->_binds);
+        }
+
+        try {
+            // Log the query for debugging 
+            $this->_profiler['profiling'][$this->_profilerActive]['query'] = $this->_query;
+
+            // Generate the full query string with bound values 
+            $this->_generateFullQuery($this->_query, $this->_binds);
+
+            // Execute the SQL DELETE statement
+            $success = $stmt->execute();
+
+            // Get the number of affected rows
+            $affectedRows = $stmt->rowCount();
+
+            // Return information about the deletion operation
+            $result = [
+                'code' => $success ? 200 : 422,
+                'affected_rows' => $affectedRows,
+                'message' => $success ? 'Data deleted successfully' : 'Failed to delete data',
+                'data' => $deletedData,
+            ];
+        } catch (\PDOException $e) {
+            // Log database errors
+            $this->db_error_log($e, __FUNCTION__);
+            throw $e; // Re-throw the exception
+        }
+
+        // Stop profiler 
+        $this->_stopProfiler();
+
+        // Reset internal properties for next query
+        $this->reset();
+
+        return $result ?? false;
+    }
+
+    /**
+     * Build an SQL DELETE statement with PDO binding.
+     *
+     * @param string $table The name of the table to delete from.
+     * @param string|array $conditions Optional. The condition(s) to specify which rows to delete.
+     * @return string|null The generated SQL DELETE statement or null if $condition is not valid.
+     */
+    private function _buildDeleteQuery()
+    {
+        // Construct the SQL delete statement
+        $this->_query = "DELETE FROM ";
+
+        // Append table name with schema (if provided)
+        if (empty($this->schema)) {
+            $this->_query .= "`$this->table`";
+        } else {
+            $this->_query .= "`$this->schema`.`$this->table`";
+        }
+
+        // Add WHERE clause if conditions exist
+        if ($this->where) {
+            $this->_query .= " WHERE " . $this->where;
+        }
+
+        return $this;
+    }
+
     /**
      * Enable or disable secure input.
      *
@@ -1883,6 +2138,101 @@ class Database
     {
         $this->_secure = $secure;
         return $this;
+    }
+
+    /**
+     * Sanitize column data to ensure that only valid columns are used.
+     *
+     * @param string $table The table name.
+     * @param array $data An associative array where keys represent column names and values represent corresponding data.
+     * @return array The sanitized column data.
+     * @throws \Exception If there's an error accessing the database or if the table does not exist.
+     */
+    protected function sanitizeColumn($data)
+    {
+        $table = $this->table;
+        $param = null;
+
+        // Get columns from table schema based on database driver
+        switch ($this->driver) {
+            case 'mysql':
+                $sql = "DESCRIBE {$this->schema}.$table";
+                break;
+            case 'mssql':
+                $sql = "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = ? AND TABLE_SCHEMA = ?";
+                $param = [$table, $this->schema];
+                break;
+            case 'oracle':
+            case 'oci':
+                $sql = "SELECT COLUMN_NAME FROM ALL_TAB_COLUMNS WHERE TABLE_NAME = ? AND OWNER = ?";
+                $param = [$table, $this->schema];
+                break;
+            case 'firebird':
+            case 'fdb':
+                $sql = "SELECT RDB\$FIELD_NAME FROM RDB\$RELATION_FIELDS WHERE RDB\$RELATION_NAME = ? AND RDB\$OWNER_NAME = ?";
+                $param = [$table, $this->schema];
+                break;
+            default:
+                throw new \Exception("Unsupported database driver '{$this->driver}'", 500);
+        }
+
+        $stmt = $this->pdo[$this->connectionName]->prepare($sql);
+        $stmt->execute($param);
+        $columns_table = $stmt->fetchAll(\PDO::FETCH_COLUMN);
+
+        // Filter $data array based on $columns_table
+        $data = array_intersect_key($data, array_flip($columns_table));
+
+        // Sanitize each value in the $data array
+        $data = array_map(function ($value) {
+            return !is_null($value) && $value !== '' ? $this->sanitize($value) : $value;
+        }, $data);
+
+        return $data;
+    }
+
+    /**
+     * Sanitize input data to prevent XSS and SQL injection attacks based on the secure flag.
+     *
+     * @param mixed $value The input data to sanitize.
+     * @return mixed|null The sanitized input data or null if $value is null or empty.
+     */
+    protected function sanitize($value = null)
+    {
+        // Check if $value is not null or empty
+        if (!isset($value) || is_null($value)) {
+            return $value;
+        }
+
+        // Check if secure mode is enabled
+        if ($this->_secure) {
+            // Sanitize input based on data type
+            switch (gettype($value)) {
+                case 'string':
+                    // Apply XSS protection and trim
+                    return htmlspecialchars(trim($value), ENT_QUOTES, 'UTF-8');
+                case 'integer':
+                case 'double':
+                    // No additional sanitization needed for numeric values
+                    return $value;
+                case 'boolean':
+                    // Cast to boolean to ensure consistent value
+                    return (bool) $value;
+                case 'array':
+                    // Sanitize each value recursively
+                    $sanitizedArray = [];
+                    foreach ($value as $key => $val) {
+                        $sanitizedArray[$key] = $this->sanitize($val);
+                    }
+                    return $sanitizedArray;
+                default:
+                    // Handle unexpected data types (consider throwing an exception)
+                    throw new \InvalidArgumentException("Unsupported data type for sanitization: " . gettype($value));
+            }
+        } else {
+            // Return input as-is if secure mode is disabled
+            return $value;
+        }
     }
 
     # EAGER LOADER SECTION
@@ -2346,7 +2696,7 @@ class Database
             $hasNamed = preg_match('/:\w+/', $query);
 
             foreach ($binds as $key => $value) {
-                $quotedValue = is_numeric($value) ? $value : htmlspecialchars($value ?? '');
+                $quotedValue = is_numeric($value) ? $value : (is_string($value) ? $this->pdo[$this->connectionName]->quote($value, \PDO::PARAM_STR) : htmlspecialchars($value ?? ''));
 
                 if ($hasPositional) {
                     // Positional parameter: replace with quoted value
