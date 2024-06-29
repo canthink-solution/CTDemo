@@ -100,9 +100,14 @@ class Database
     protected $_error;
 
     /**
-     * @var bool The flag for sanitization.
+     * @var bool The flag for sanitization for insert/update method.
      */
-    protected $_secure = true;
+    protected $_secureInput = false;
+
+    /**
+     * @var bool The flag for sanitization for get/fetch/pagination.
+     */
+    protected $_secureOutput = false;
 
     /**
      * @var array An array to store the bound parameters.
@@ -131,7 +136,7 @@ class Database
         'start_time' => true,
         'end_time' => true,
         'query' => true,
-        'binds' => false,
+        'binds' => true,
         'full_query' => true,
         'execution_time' => true,
         'execution_status' => true,
@@ -480,7 +485,7 @@ class Database
         $this->where = null;
         $this->joins = null;
         $this->_error = [];
-        $this->_secure = true;
+        $this->_secureInput = false;
         $this->_binds = [];
         $this->_query = [];
         $this->relations = [];
@@ -1452,6 +1457,9 @@ class Database
             $_temp_cacheKey = $this->cacheFile;
             $_temp_cacheExpired = $this->cacheFileExpired;
 
+            // Check if need to sanitize output
+            $result = $this->_safeOutputSanitize($result);
+
             // Reset internal properties for next query
             $this->reset();
 
@@ -1466,6 +1474,9 @@ class Database
 
             unset($_temp_connection, $_temp_relations, $_temp_cacheKey, $_temp_cacheExpired, $cachePrefix);
         }
+
+        // Reset safeOutput
+        $this->safeOutput(false);
 
         return $result;
     }
@@ -1535,6 +1546,9 @@ class Database
             $_temp_cacheKey = $this->cacheFile;
             $_temp_cacheExpired = $this->cacheFileExpired;
 
+            // Check if need to sanitize output
+            $result = $this->_safeOutputSanitize($result);
+
             // Reset internal properties for next query
             $this->reset();
 
@@ -1549,6 +1563,9 @@ class Database
 
             unset($_temp_connection, $_temp_relations, $_temp_cacheKey, $_temp_cacheExpired, $cachePrefix);
         }
+
+        // Reset secureOutput
+        $this->safeOutput(false);
 
         // Return the first result or null if not found
         return $result;
@@ -1572,6 +1589,8 @@ class Database
 
         // Build the final SELECT query string
         $this->_buildSelectQuery();
+
+        $this->_setProfilerIdentifier(__FUNCTION__);
 
         // Start profiler for performance measurement 
         $this->_startProfiler(__FUNCTION__);
@@ -1612,7 +1631,7 @@ class Database
             }
 
             // Log the query for debugging 
-            $this->_profiler['profiling'][$this->_profilerActive]['query'] = $this->_query;
+            $this->_profiler['profiling'][__FUNCTION__]['query'] = $this->_query;
 
             // Generate the full query string with bound values 
             $this->_generateFullQuery($this->_query, $this->_binds);
@@ -1640,7 +1659,7 @@ class Database
                 'draw' => $draw,
                 'recordsTotal' => $total ?? 0,
                 'recordsFiltered' => count($result) ?? 0,
-                'data' => $result ?? null,
+                'data' => $this->_safeOutputSanitize($result) ?? null,
                 'current_page' => $currentPage,
                 'next_page' => $nextPage,
                 'previous_page' => $previousPage,
@@ -1654,7 +1673,7 @@ class Database
         }
 
         // Stop profiler 
-        $this->_stopProfiler();
+        $this->_stopProfiler(__FUNCTION__);
 
         // Save connection name and relations temporarily
         $_temp_connection = $this->connectionName;
@@ -1669,6 +1688,9 @@ class Database
         }
 
         unset($_temp_connection, $_temp_relations);
+
+        // Reset safeOutput
+        $this->safeOutput(false);
 
         return $paginate;
     }
@@ -1685,6 +1707,8 @@ class Database
     public function count()
     {
         try {
+
+            $this->_setProfilerIdentifier(__FUNCTION__);
 
             // Start profiler for performance measurement
             $this->_startProfiler(__FUNCTION__);
@@ -1717,11 +1741,17 @@ class Database
                 $this->_bindParams($stmtTotal, $this->_binds);
             }
 
+            // Log the query for debugging 
+            $this->_profiler['profiling'][__FUNCTION__]['query'] = $sqlTotal;
+
+            // Generate the full query string with bound values 
+            $this->_generateFullQuery($sqlTotal, $this->_binds);
+
             $stmtTotal->execute();
             $totalResult = $stmtTotal->fetch(\PDO::FETCH_ASSOC);
 
             // Stop profiler
-            $this->_stopProfiler();
+            $this->_stopProfiler(__FUNCTION__);
 
             return $totalResult['count'] ?? 0;
         } catch (\PDOException $e) {
@@ -2273,9 +2303,21 @@ class Database
      * @param bool $secure Whether to enable or disable secure input.
      * @return $this
      */
-    public function secureInput($secure = true)
+    public function safeInput()
     {
-        $this->_secure = $secure;
+        $this->_secureInput = true;
+        return $this;
+    }
+
+    /**
+     * Enable or disable secure output.
+     *
+     * @param bool $secure Whether to enable or disable secure output.
+     * @return $this
+     */
+    public function safeOutput($enable = true)
+    {
+        $this->_secureOutput = $enable;
         return $this;
     }
 
@@ -2322,10 +2364,12 @@ class Database
         // Filter $data array based on $columns_table
         $data = array_intersect_key($data, array_flip($columns_table));
 
-        // Sanitize each value in the $data array
-        $data = array_map(function ($value) {
-            return !is_null($value) && $value !== '' ? $this->sanitize($value) : $value;
-        }, $data);
+        if ($this->_secureInput) {
+            // Sanitize each value in the $data array
+            $data = array_map(function ($value) {
+                return !is_null($value) && $value !== '' ? $this->sanitize($value) : $value;
+            }, $data);
+        }
 
         return $data;
     }
@@ -2343,35 +2387,56 @@ class Database
             return $value;
         }
 
-        // Check if secure mode is enabled
-        if ($this->_secure) {
-            // Sanitize input based on data type
-            switch (gettype($value)) {
-                case 'string':
-                    // Apply XSS protection and trim
-                    return htmlspecialchars(trim($value), ENT_QUOTES, 'UTF-8');
-                case 'integer':
-                case 'double':
-                    // No additional sanitization needed for numeric values
-                    return $value;
-                case 'boolean':
-                    // Cast to boolean to ensure consistent value
-                    return (bool) $value;
-                case 'array':
-                    // Sanitize each value recursively
-                    $sanitizedArray = [];
-                    foreach ($value as $key => $val) {
-                        $sanitizedArray[$key] = $this->sanitize($val);
-                    }
-                    return $sanitizedArray;
-                default:
-                    // Handle unexpected data types (consider throwing an exception)
-                    throw new \InvalidArgumentException("Unsupported data type for sanitization: " . gettype($value));
-            }
-        } else {
-            // Return input as-is if secure mode is disabled
-            return $value;
+        // Sanitize input based on data type
+        switch (gettype($value)) {
+            case 'string':
+                // Apply XSS protection and trim
+                return htmlspecialchars(trim($value), ENT_QUOTES, 'UTF-8');
+            case 'integer':
+            case 'double':
+                // No additional sanitization needed for numeric values
+                return $value;
+            case 'boolean':
+                // Cast to boolean to ensure consistent value
+                return (bool) $value;
+            case 'array':
+                // Sanitize each value recursively
+                $sanitizedArray = [];
+                foreach ($value as $key => $val) {
+                    $sanitizedArray[$key] = $this->sanitize($val);
+                }
+                return $sanitizedArray;
+            default:
+                // Handle unexpected data types (consider throwing an exception)
+                throw new \InvalidArgumentException("Unsupported data type for sanitization: " . gettype($value));
         }
+    }
+
+    /**
+     * Sanitizes the output data to prevent XSS attacks by applying htmlspecialchars
+     * and trimming values. It handles single values, arrays, and multidimensional arrays.
+     *
+     * @param mixed $data The data to be sanitized.
+     * @return mixed The sanitized data.
+     */
+    protected function _safeOutputSanitize($data)
+    {
+        // Check if secure output is enabled
+        if (!$this->_secureOutput) {
+            return $data;
+        }
+
+        // Early return if data is null or empty
+        if (is_null($data) || $data === '') {
+            return $data;
+        }
+
+        // Recursive function to handle arrays and multidimensional arrays
+        if (is_array($data)) {
+            return array_map([$this, '_safeOutputSanitize'], $data);
+        }
+
+        return $this->sanitize($data);
     }
 
     # EAGER LOADER SECTION
@@ -2485,7 +2550,9 @@ class Database
             $callback($relatedRecordsQuery);
         }
 
-        return $relatedRecordsQuery->get();
+        $data = $relatedRecordsQuery->get();
+
+        return $this->_safeOutputSanitize($data);
     }
 
     /**
@@ -2549,7 +2616,7 @@ class Database
     private function _setProfilerIdentifier($identifier = 'main')
     {
         $this->_profilerActive = $identifier;
-        return $this->_profilerActive;
+        return $this;
     }
 
     /**
@@ -2609,8 +2676,12 @@ class Database
      * It also updates the profiler data with end time, formatted end time, execution time, and status.
      * 
      */
-    private function _stopProfiler()
+    private function _stopProfiler($profileIdentifier = null)
     {
+        if (!empty($profileIdentifier)) {
+            $this->_profilerActive = $profileIdentifier;
+        }
+
         if (!isset($this->_profiler['profiling'][$this->_profilerActive])) {
             return;  // Profiler not started
         }
