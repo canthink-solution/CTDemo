@@ -120,6 +120,27 @@ class Database
     protected $_profiler = [];
 
     /**
+     * @var array An array to store profiling config to display.
+     */
+    protected $_profilerShowConf = [
+        'php_ver' => true,
+        'os_ver' => true,
+        'db_driver' => true,
+        'db_ver' => true,
+        'method' => true,
+        'start_time' => true,
+        'end_time' => true,
+        'query' => true,
+        'binds' => false,
+        'full_query' => true,
+        'execution_time' => true,
+        'execution_status' => true,
+        'memory_usage' => true,
+        'memory_usage_peak' => true,
+        'stack_trace' => false
+    ];
+
+    /**
      * @var string An string to store current active profiler
      */
     protected $_profilerActive = 'main';
@@ -1954,6 +1975,9 @@ class Database
         // Prepare the query statement
         $stmt = $this->pdo[$this->connectionName]->prepare($this->_query);
 
+        // Bind parameters 
+        $this->_bindParams($stmt, array_values($sanitizeData));
+
         try {
             // Log the query for debugging 
             $this->_profiler['profiling'][$this->_profilerActive]['query'] = $this->_query;
@@ -2028,7 +2052,6 @@ class Database
         }
 
         $this->_query .= " VALUES ($placeholders)";
-        $this->_binds = array_values($data); // Extract values from $data
 
         return $this;
     }
@@ -2065,6 +2088,9 @@ class Database
 
         // Prepare the query statement
         $stmt = $this->pdo[$this->connectionName]->prepare($this->_query);
+
+        // Bind parameters 
+        $this->_bindParams($stmt, array_merge(array_values($sanitizeData), $this->_binds));
 
         try {
             // Log the query for debugging 
@@ -2137,9 +2163,6 @@ class Database
         if ($this->where) {
             $this->_query .= " WHERE " . $this->where;
         }
-
-        // Extract values from $data for binding
-        $this->_binds = array_merge(array_values($data), $this->_binds);
 
         return $this;
     }
@@ -2542,34 +2565,37 @@ class Database
         $startTime = microtime(true);
 
         // Get PHP version
-        $this->_profiler['php'] = phpversion();  // Simpler approach for version string
+        $this->_profiler['php_ver'] = phpversion();  // Simpler approach for version string
 
         // Get OS version
         if (function_exists('php_uname')) {
-            $this->_profiler['os'] = php_uname('s') . ' ' . php_uname('r');  // OS and release
+            $this->_profiler['os_ver'] = php_uname('s') . ' ' . php_uname('r');  // OS and release
         } else {
             // Handle cases where php_uname is not available
-            $this->_profiler['os'] = 'Unknown';
+            $this->_profiler['os_ver'] = 'Unknown';
         }
 
-        // Get database version (assuming a PDO connection)
+        // Get database driver 
+        $this->_profiler['db_driver'] = $this->driver ?? 'mysql';
+
+        // Get database version 
         if (isset($this->pdo[$this->connectionName]) && $this->pdo[$this->connectionName] instanceof \PDO) {
-            $this->_profiler['database'] = $this->pdo[$this->connectionName]->getAttribute(\PDO::ATTR_SERVER_VERSION);
+            $this->_profiler['db_ver'] = $this->pdo[$this->connectionName]->getAttribute(\PDO::ATTR_SERVER_VERSION);
         } else {
             // Handle cases where no database connection exists
-            $this->_profiler['database'] = 'Unknown';
+            $this->_profiler['db_ver'] = 'Unknown';
         }
 
         $this->_profiler['profiling'][$this->_profilerActive] = [
             'method' => $method,
             'start' => $startTime,
-            'start_formatted' => date('Y-m-d h:i A', (int) $startTime),
+            'end' => null,
+            'start_time' => date('Y-m-d h:i A', (int) $startTime),
+            'end_time' => null,
             'query' => null,
             'binds' => null,
-            'end' => null,
-            'end_formatted' => null,
             'execution_time' => null,
-            'status' => null,
+            'execution_status' => null,
             'memory_usage' => memory_get_usage(),
             'memory_usage_peak' => memory_get_peak_usage()
         ];
@@ -2596,7 +2622,7 @@ class Database
         $this->_profiler['profiling'][$this->_profilerActive]['memory_usage_peak'] = $this->_formatBytes(memory_get_peak_usage() - $this->_profiler['profiling'][$this->_profilerActive]['memory_usage_peak'], 4);
 
         $this->_profiler['profiling'][$this->_profilerActive]['end'] = $endTime;
-        $this->_profiler['profiling'][$this->_profilerActive]['end_formatted'] = date('Y-m-d h:i A', (int) $endTime);
+        $this->_profiler['profiling'][$this->_profilerActive]['end_time'] = date('Y-m-d h:i A', (int) $endTime);
 
         // Calculate and format execution time with milliseconds
         $milliseconds = round(($executionTime - floor($executionTime)) * 1000, 2);
@@ -2617,20 +2643,30 @@ class Database
         }
 
         $this->_profiler['profiling'][$this->_profilerActive]['execution_time'] = $formattedExecutionTime;
-        $this->_profiler['stack_trace'] = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 8); // Capture starting stack trace
+        $this->_profiler['stack_trace'] = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 10); // Capture starting stack trace
 
         // Set execution status based on predefined thresholds
-        $this->_profiler['profiling'][$this->_profilerActive]['status'] = ($executionTime >= 3.5) ? 'very slow' : (($executionTime >= 1.5 && $executionTime < 3.5) ? 'slow' : (($executionTime > 0.5 && $executionTime < 1.49) ? 'fast' : 'very fast'));
+        $this->_profiler['profiling'][$this->_profilerActive]['execution_status'] = ($executionTime >= 3.5) ? 'very slow' : (($executionTime >= 1.5 && $executionTime < 3.5) ? 'slow' : (($executionTime > 0.5 && $executionTime < 1.49) ? 'fast' : 'very fast'));
 
         // Removed unused profiler from being display & free resources
         unset(
             $endTime,
             $executionTime,
             $formattedExecutionTime,
-            $this->_profiler['profiling'][$this->_profilerActive]['binds'],
             $this->_profiler['profiling'][$this->_profilerActive]['start'],
             $this->_profiler['profiling'][$this->_profilerActive]['end'],
         );
+
+        // get profiler config
+        foreach ($this->_profilerShowConf as $config => $value) {
+            if (!$value) {
+                if (!in_array($config, ['php_ver', 'os_ver', 'db_driver', 'db_ver', 'stack_trace'])) {
+                    unset($this->_profiler['profiling'][$this->_profilerActive][$config]);
+                } else {
+                    unset($this->_profiler[$config]);
+                }
+            }
+        }
     }
 
     # HELPER SECTION
