@@ -2006,6 +2006,11 @@ class Database
      */
     private function _buildInsertQuery($data)
     {
+        // Check if data is empty or not an associative array (key-value pairs)
+        if (empty($data) || !is_array($data)) {
+            throw new \InvalidArgumentException('Invalid column data. Must be an associative array with column names as keys.');
+        }
+
         // Construct column names string
         $columns = implode(', ', array_keys($data));
 
@@ -2024,6 +2029,117 @@ class Database
 
         $this->_query .= " VALUES ($placeholders)";
         $this->_binds = array_values($data); // Extract values from $data
+
+        return $this;
+    }
+
+    # UPDATE DATA OPERATION
+
+    /**
+     * Updates a record in the database based on the provided data.
+     *
+     * @param array $data An associative array containing column names as keys and new values as values.
+     * @throws InvalidArgumentException If the provided data is empty, not an array, or not an associative array with column names as keys.
+     * @throws InvalidArgumentException If the table name is not specified.
+     * @return array An associative array containing information about the update operation, including code, affected rows, message, and data.
+     */
+    public function update($data)
+    {
+        // Check if string is empty
+        if (empty($data) || !is_array($data)) {
+            throw new \InvalidArgumentException('Invalid column data. Must be a associative array.');
+        }
+
+        if (empty($this->table)) {
+            throw new \InvalidArgumentException('Please specify the table.');
+        }
+
+        // Start profiler for performance measurement 
+        $this->_startProfiler(__FUNCTION__);
+
+        // sanitize column to ensure column is exists.
+        $sanitizeData = $this->sanitizeColumn($data);
+
+        // Build the final INSERT query string
+        $this->_buildUpdateQuery($sanitizeData);
+
+        // Prepare the query statement
+        $stmt = $this->pdo[$this->connectionName]->prepare($this->_query);
+
+        try {
+            // Log the query for debugging 
+            $this->_profiler['profiling'][$this->_profilerActive]['query'] = $this->_query;
+
+            // Generate the full query string with bound values 
+            $this->_generateFullQuery($this->_query, $this->_binds);
+
+            // Execute the statement
+            $success = $stmt->execute($this->_binds);
+
+            // Get the number of affected rows
+            $affectedRows = $stmt->rowCount();
+
+            // Return information about the insertion operation
+            $result = [
+                'code' => $success ? 200 : 422,
+                'affected_rows' => $affectedRows,
+                'message' => $success ? 'Data updated successfully' : 'Failed to update data',
+                'data' => $sanitizeData,
+            ];
+        } catch (\PDOException $e) {
+            // Log database errors
+            $this->db_error_log($e, __FUNCTION__);
+            throw $e; // Re-throw the exception
+        }
+
+        // Stop profiler 
+        $this->_stopProfiler();
+
+        // Reset internal properties for next query
+        $this->reset();
+
+        return $result ?? false;
+    }
+
+    /**
+     * Builds the SQL UPDATE query string based on the provided data.
+     *
+     * @param array $data An associative array containing column names as keys and new values as values.
+     * @throws InvalidArgumentException If the provided data is empty, not an array, or not an associative array with column names as keys.
+     * @return object $this The current object instance for chaining methods.
+     */
+    private function _buildUpdateQuery($data)
+    {
+        // Check if data is empty or not an associative array (key-value pairs)
+        if (empty($data) || !is_array($data)) {
+            throw new \InvalidArgumentException('Invalid column data. Must be an associative array with column names as keys.');
+        }
+
+        // Construct a comma-separated list of SET clauses
+        $set = [];
+        foreach ($data as $column => $value) {
+            $set[] = "`$column` = ?";
+        }
+        $set = implode(', ', $set);
+
+        // Construct the SQL UPDATE statement with table name
+        $this->_query = "UPDATE ";
+        if (empty($this->schema)) {
+            $this->_query .= "`$this->table` ";
+        } else {
+            $this->_query .= "`$this->schema`.`$this->table` ";
+        }
+
+        // Append SET clause and placeholder for values
+        $this->_query .= "SET $set";
+
+        // Add WHERE clause if conditions exist
+        if ($this->where) {
+            $this->_query .= " WHERE " . $this->where;
+        }
+
+        // Extract values from $data for binding
+        $this->_binds = array_merge(array_values($data), $this->_binds);
 
         return $this;
     }
