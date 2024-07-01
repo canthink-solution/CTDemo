@@ -2027,7 +2027,7 @@ class Database
                 'code' => $success ? 201 : 422,
                 'id' => $lastInsertId,
                 'message' => $success ? 'Data inserted successfully' : 'Failed to insert data',
-                'data' => $sanitizeData,
+                'data' => $this->_safeOutputSanitize($sanitizeData)
             ];
         } catch (\PDOException $e) {
             // Log database errors
@@ -2138,7 +2138,7 @@ class Database
                 'code' => $success ? 200 : 422,
                 'affected_rows' => $affectedRows,
                 'message' => $success ? 'Data updated successfully' : 'Failed to update data',
-                'data' => $sanitizeData,
+                'data' => $this->_safeOutputSanitize($sanitizeData)
             ];
         } catch (\PDOException $e) {
             // Log database errors
