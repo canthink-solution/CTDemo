@@ -1590,8 +1590,6 @@ class Database
         // Build the final SELECT query string
         $this->_buildSelectQuery();
 
-        $this->_setProfilerIdentifier(__FUNCTION__);
-
         // Start profiler for performance measurement 
         $this->_startProfiler(__FUNCTION__);
 
@@ -1601,7 +1599,9 @@ class Database
             $offset = ($currentPage - 1) * $limit;
 
             // Get total count
+            $this->_setProfilerIdentifier('count'); // set new profiler
             $total = $this->count();
+            $this->_setProfilerIdentifier(); // reset back to paginate profiler
 
             // Calculate total pages
             $totalPages = ceil($total / $limit);
@@ -1631,7 +1631,7 @@ class Database
             }
 
             // Log the query for debugging 
-            $this->_profiler['profiling'][__FUNCTION__]['query'] = $this->_query;
+            $this->_profiler['profiling'][$this->_profilerActive]['query'] = $this->_query;
 
             // Generate the full query string with bound values 
             $this->_generateFullQuery($this->_query, $this->_binds);
@@ -1673,7 +1673,7 @@ class Database
         }
 
         // Stop profiler 
-        $this->_stopProfiler(__FUNCTION__);
+        $this->_stopProfiler();
 
         // Save connection name and relations temporarily
         $_temp_connection = $this->connectionName;
@@ -1707,8 +1707,6 @@ class Database
     public function count()
     {
         try {
-
-            $this->_setProfilerIdentifier(__FUNCTION__);
 
             // Start profiler for performance measurement
             $this->_startProfiler(__FUNCTION__);
@@ -1751,7 +1749,7 @@ class Database
             $totalResult = $stmtTotal->fetch(\PDO::FETCH_ASSOC);
 
             // Stop profiler
-            $this->_stopProfiler(__FUNCTION__);
+            $this->_stopProfiler();
 
             return $totalResult['count'] ?? 0;
         } catch (\PDOException $e) {
@@ -2390,22 +2388,14 @@ class Database
         // Sanitize input based on data type
         switch (gettype($value)) {
             case 'string':
-                // Apply XSS protection and trim
-                return htmlspecialchars(trim($value), ENT_QUOTES, 'UTF-8');
+                return htmlspecialchars(trim($value), ENT_QUOTES, 'UTF-8');  // Apply XSS protection and trim
             case 'integer':
             case 'double':
-                // No additional sanitization needed for numeric values
                 return $value;
             case 'boolean':
-                // Cast to boolean to ensure consistent value
                 return (bool) $value;
             case 'array':
-                // Sanitize each value recursively
-                $sanitizedArray = [];
-                foreach ($value as $key => $val) {
-                    $sanitizedArray[$key] = $this->sanitize($val);
-                }
-                return $sanitizedArray;
+                return array_map([$this, 'sanitize'], $value);
             default:
                 // Handle unexpected data types (consider throwing an exception)
                 throw new \InvalidArgumentException("Unsupported data type for sanitization: " . gettype($value));
@@ -2421,7 +2411,6 @@ class Database
      */
     protected function _safeOutputSanitize($data)
     {
-        // Check if secure output is enabled
         if (!$this->_secureOutput) {
             return $data;
         }
@@ -2429,11 +2418,6 @@ class Database
         // Early return if data is null or empty
         if (is_null($data) || $data === '') {
             return $data;
-        }
-
-        // Recursive function to handle arrays and multidimensional arrays
-        if (is_array($data)) {
-            return array_map([$this, '_safeOutputSanitize'], $data);
         }
 
         return $this->sanitize($data);
@@ -2676,12 +2660,8 @@ class Database
      * It also updates the profiler data with end time, formatted end time, execution time, and status.
      * 
      */
-    private function _stopProfiler($profileIdentifier = null)
+    private function _stopProfiler()
     {
-        if (!empty($profileIdentifier)) {
-            $this->_profilerActive = $profileIdentifier;
-        }
-
         if (!isset($this->_profiler['profiling'][$this->_profilerActive])) {
             return;  // Profiler not started
         }
@@ -2721,6 +2701,11 @@ class Database
 
         // Removed unused profiler from being display & free resources
         unset(
+            $milliseconds,
+            $totalSeconds,
+            $seconds,
+            $minutes,
+            $hours,
             $endTime,
             $executionTime,
             $formattedExecutionTime,
@@ -2728,7 +2713,7 @@ class Database
             $this->_profiler['profiling'][$this->_profilerActive]['end'],
         );
 
-        // get profiler config
+        // Get profiler config and removed to free resources
         foreach ($this->_profilerShowConf as $config => $value) {
             if (!$value) {
                 if (!in_array($config, ['php_ver', 'os_ver', 'db_driver', 'db_ver', 'stack_trace'])) {
