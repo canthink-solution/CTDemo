@@ -335,6 +335,8 @@ class Database
             throw new \Exception('Connection ' . $name . ' was not added.');
 
         $this->connectionName = $name;
+        $this->connect($this->connectionName);
+
         return $this;
     }
 
@@ -2626,7 +2628,8 @@ class Database
             $this->_profiler['os_ver'] = 'Unknown';
         }
 
-        // Get database driver 
+        // Get database driver
+        $this->_profiler['db_connection'] = $this->connectionName;
         $this->_profiler['db_driver'] = $this->driver ?? 'mysql';
 
         // Get database version 
@@ -2636,6 +2639,9 @@ class Database
             // Handle cases where no database connection exists
             $this->_profiler['db_ver'] = 'Unknown';
         }
+
+        // Get database schema
+        $this->_profiler['db_schema'] = $this->schema;
 
         $this->_profiler['profiling'][$this->_profilerActive] = [
             'method' => $method,
