@@ -1,47 +1,28 @@
 <?php
 
-use Sys\framework\Database;
+use Sys\framework\Database\Database;
 use Sys\framework\Validation;
 use Sys\framework\Logger;
 use Sys\framework\TaskRunner;
 
-function db($connection = 'default')
-{
-    if ($connection == 'default') {
-        $dbCon = ConfigDB();
-        if (!Database::getInstance())
-            return new Database($dbCon['driver'] ?? 'mysql', $dbCon['hostname'] ?? 'localhost', $dbCon['username'] ?? 'root', $dbCon['password'], $dbCon['database'], $dbCon['port'], $dbCon['charset']);
-        else
-            return Database::getInstance();
-    } else {
-        return connect($connection);
-    }
-}
-
 // DATABASE SECTION
 
-function ConfigDB($connection = 'default')
+function db($connection = 'default')
 {
     global $config;
 
-    if (hasData($config['db'], $connection)) {
-        return $config['db'][$connection][ENVIRONMENT];
-    }
+    try {
+        $dbConfig = $config['db'];
 
-    exit('Database connection ' . $connection . ' not found');
-}
+        $dbObj = new Database('mysql');
 
-function connect($connection = 'default')
-{
-    global $config;
+        $dbObj->addConnection('default', $dbConfig['default']['development']);
+        $dbObj->addConnection('slave', $dbConfig['slave']['development']);
 
-    if (hasData($config['db'], $connection)) {
-        $db = Database::getInstance();
-        $db->connect($connection);
-        $db->connection($connection);
-        return $db;
-    } else {
-        exit("No connection with <b>'$connection'</b> name");
+        return $dbObj->connect($connection);
+    } catch (Exception $e) {
+        log_message('error', "db->" . __FUNCTION__ . "() : " . $e->getMessage());
+        dd('Database connection : Failed to connect to database.');
     }
 }
 

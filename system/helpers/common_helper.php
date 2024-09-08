@@ -427,9 +427,9 @@ if (!function_exists('hasData')) {
 
 			// Check if $currentData is an array or an object
 			if (is_array($currentData) && array_key_exists($key, $currentData)) {
-				return $traverse($keys, $currentData[$key]);
+				return !is_null($currentData[$key]) ? $traverse($keys, $currentData[$key]) : ($returnData ? ($defaultValue ?? NULL) : false);
 			} elseif (is_object($currentData) && isset($currentData->$key)) {
-				return $traverse($keys, $currentData->$key);
+				return !is_null($currentData->$key) ? $traverse($keys, $currentData->$key) : ($returnData ? ($defaultValue ?? NULL) : false);
 			} else {
 				// If the key doesn't exist, return the default value or false
 				return $returnData ? $defaultValue : false;
@@ -492,6 +492,6 @@ function nodata($showText = true, $filesName = '5.png')
 
 function error_page($code, $path = 'app/views/errors/')
 {
-    $errorFile = $path . $code . '.php';
+	$errorFile = $path . $code . '.php';
 	redirect($errorFile, true);
 }
