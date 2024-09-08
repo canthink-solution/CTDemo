@@ -13,17 +13,14 @@ use Sys\constants\GeneralStatus;
 
 function authorize(Request $request)
 {
-    $username = request('username', false);
+    $username = request('username');
     $enteredPassword = request('password');
 
-    $db = db();
-    $userData = $db->table('users')
-        // ->select('`users`.`id`, `users`.`name`, `users`.`email`, `users`.`user_preferred_name`, `users`.`password`, `users`.`user_status`')
-        // ->where('email', 'LIKE', '%' . $username . '%')
-        ->where('username', $request->input('username'))
-        ->toDebugSql();
-
-    dd(__FUNCTION__, $request->all(), $userData, $db->profiler());
+    $userData = db()->table('users')
+        ->select('`users`.`id`, `users`.`name`, `users`.`email`, `users`.`user_preferred_name`, `users`.`password`, `users`.`user_status`')
+        ->where('email', $username)
+        ->orWhere('username', $username)
+        ->fetch();
 
     $response = GeneralErrorMessage::LIST['AUTH']['DEFAULT']; // set default
 
@@ -86,7 +83,7 @@ function loginSessionStart($userData, $loginType = LoginType::CREDENTIAL)
                         $permission[] = $ability['abilities']['title'];
                     }
                 }
-
+                
                 startSession([
                     'userID'  => $userData['id'],
                     'userFullName'  => purify($userData['name']),

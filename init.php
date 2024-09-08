@@ -113,31 +113,31 @@ foreach ($directories as $directory) {
 */
 
 if (isset($config['db']) || is_array($config['db'])) {
-  foreach ($config['db'] as $connectionName => $setting) {
-    if ($connectionName === 'default') {
-      continue; // Skip the default connection
-    }
+  // foreach ($config['db'] as $connectionName => $setting) {
+  //   if ($connectionName === 'default') {
+  //     continue; // Skip the default connection
+  //   }
 
-    // Check if the configuration for the current environment exists
-    if (isset($setting[ENVIRONMENT]) && is_array($setting[ENVIRONMENT])) {
-      // Check if the necessary parameters are set and not empty
-      if (!empty($setting[ENVIRONMENT]['hostname']) && !empty($setting[ENVIRONMENT]['username'])) {
-        db()->addConnection(
-          trim($connectionName),
-          [
-            'driver' => $setting[ENVIRONMENT]['driver'] ?? 'mysql',
-            'host' => $setting[ENVIRONMENT]['hostname'] ?? 'localhost',
-            'username' => $setting[ENVIRONMENT]['username'] ?? 'root',
-            'password' => $setting[ENVIRONMENT]['password'] ?? null,
-            'db' => $setting[ENVIRONMENT]['database'] ?? null,
-            'port' => $setting[ENVIRONMENT]['port'] ?? null,
-            'charset' => $setting[ENVIRONMENT]['charset'] ?? null,
-            'socket' => $setting[ENVIRONMENT]['socket'] ?? null
-          ]
-        );
-      }
-    }
-  }
+  //   // Check if the configuration for the current environment exists
+  //   if (isset($setting[ENVIRONMENT]) && is_array($setting[ENVIRONMENT])) {
+  //     // Check if the necessary parameters are set and not empty
+  //     if (!empty($setting[ENVIRONMENT]['hostname']) && !empty($setting[ENVIRONMENT]['username'])) {
+  //       db()->addConnection(
+  //         trim($connectionName),
+  //         [
+  //           'driver' => $setting[ENVIRONMENT]['driver'] ?? 'mysql',
+  //           'host' => $setting[ENVIRONMENT]['hostname'] ?? 'localhost',
+  //           'username' => $setting[ENVIRONMENT]['username'] ?? 'root',
+  //           'password' => $setting[ENVIRONMENT]['password'] ?? null,
+  //           'db' => $setting[ENVIRONMENT]['database'] ?? null,
+  //           'port' => $setting[ENVIRONMENT]['port'] ?? null,
+  //           'charset' => $setting[ENVIRONMENT]['charset'] ?? null,
+  //           'socket' => $setting[ENVIRONMENT]['socket'] ?? null
+  //         ]
+  //       );
+  //     }
+  //   }
+  // }
 }
 
 /*
